@@ -32,16 +32,18 @@ class LoDResetOp : public framework::OperatorWithKernel {
       PADDLE_ENFORCE_GT(level0.size(), 1,
                         "If Input(Y) not provided, the target lod should be "
                         "specified by attribute `target_lod`.");
+    } else {
+      ctx->ShareLoD("Y", "Out");
     }
+
     ctx->SetOutputDim("Out", ctx->GetInputDim("X"));
   }
 
  protected:
   framework::OpKernelType GetExpectedKernelType(
       const framework::ExecutionContext &ctx) const override {
-    return framework::OpKernelType(
-        framework::ToDataType(ctx.Input<framework::LoDTensor>("X")->type()),
-        ctx.device_context());
+    return framework::OpKernelType(ctx.Input<framework::LoDTensor>("X")->type(),
+                                   ctx.device_context());
   }
 };
 
@@ -144,9 +146,8 @@ class LoDResetGradOp : public framework::OperatorWithKernel {
  protected:
   framework::OpKernelType GetExpectedKernelType(
       const framework::ExecutionContext &ctx) const override {
-    return framework::OpKernelType(
-        framework::ToDataType(ctx.Input<framework::LoDTensor>("X")->type()),
-        ctx.device_context());
+    return framework::OpKernelType(ctx.Input<framework::LoDTensor>("X")->type(),
+                                   ctx.device_context());
   }
 };
 

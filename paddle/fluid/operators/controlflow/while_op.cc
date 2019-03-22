@@ -18,6 +18,7 @@
 #include "paddle/fluid/framework/op_registry.h"
 #include "paddle/fluid/framework/operator.h"
 #include "paddle/fluid/framework/var_type.h"
+#include "paddle/fluid/operators/controlflow/while_op_helper.h"
 #include "paddle/fluid/operators/detail/safe_ref.h"
 
 namespace paddle {
@@ -25,14 +26,6 @@ namespace operators {
 
 using StepScopeVar = std::vector<framework::Scope *>;
 using LoDTensor = framework::LoDTensor;
-
-static constexpr char kStepBlock[] = "sub_block";
-static constexpr char kCondition[] = "Condition";
-static constexpr char kStepScopes[] = "StepScopes";
-static constexpr char kX[] = "X";
-static constexpr char kXGRAD[] = "X@GRAD";
-static constexpr char kOutputs[] = "Out";
-static constexpr char kSkipEagerDeletionVars[] = "skip_eager_deletion_vars";
 
 namespace {  // NOLINT
 static std::string GetSkipEagerDeletionVarsDebugString(
@@ -175,14 +168,13 @@ class WhileGradOp : public framework::OperatorBase {
         auto &og_inside =
             detail::Ref(cur_scope.Var(inside_og_name),
                         "Cannot find inside gradient %s", inside_og_name);
-        if (framework::IsType<framework::LoDTensor>(og_outside.Type())) {
+        if (og_outside.IsType<framework::LoDTensor>()) {
           auto &outside_tensor = og_outside.Get<framework::LoDTensor>();
           auto &inside_tensor =
               detail::Ref(og_inside.GetMutable<framework::LoDTensor>());
           inside_tensor.set_lod(outside_tensor.lod());
           inside_tensor.ShareDataWith(outside_tensor);
-        } else if (framework::IsType<framework::LoDTensorArray>(
-                       og_outside.Type())) {
+        } else if (og_outside.IsType<framework::LoDTensorArray>()) {
           auto &outside_array = og_outside.Get<framework::LoDTensorArray>();
           auto &inside_array =
               detail::Ref(og_inside.GetMutable<framework::LoDTensorArray>());
@@ -256,12 +248,12 @@ class WhileGradOp : public framework::OperatorBase {
                   var->IsType<LoDTensor>(),
               "Currently the type of var only can be LoDTensorArray, "
               "or LoDTensor, but the received var[%s] is %s.",
-              inside_grad_name, var->Type().name());
+              inside_grad_name, framework::ToTypeName(var->Type()));
 
           if (var->IsType<LoDTensor>()) {
             auto &inside_tensor = var->Get<framework::LoDTensor>();
             framework::AttributeMap attrs;
-            attrs["dtype"] = framework::ToDataType(inside_tensor.type());
+            attrs["dtype"] = inside_tensor.type();
             attrs["shape"] = framework::vectorize2int(inside_tensor.dims());
             attrs["value"] = 0.0f;
 
@@ -373,19 +365,16 @@ class WhileGradOpDescMaker : public framework::SingleGradOpDescMaker {
 
 class WhileGradOpVarTypeInference : public framework::VarTypeInference {
  public:
-  void operator()(const framework::OpDesc &op_desc,
-                  framework::BlockDesc *block) const override {
-    auto p_names = op_desc.Input(kX);
-    auto pg_ig_names = op_desc.Output(framework::GradVarName(kX));
+  void operator()(framework::InferVarTypeContext *ctx) const override {
+    auto p_names = ctx->Input(kX);
+    auto pg_ig_names = ctx->Output(framework::GradVarName(kX));
 
     for (size_t i = 0; i < p_names.size(); ++i) {
-      auto &p_var = detail::Ref(block->FindVarRecursive(p_names[i]));
-      auto *g_var = block->FindVarRecursive(pg_ig_names[i]);
-      if (g_var != nullptr) {  // Gradient could be @EMPTY@
+      if (ctx->HasVar(pg_ig_names[i])) {
         VLOG(5) << "Setting " << pg_ig_names[i] << " following " << p_names[i]
-                << " type: " << p_var.GetType();
-        g_var->SetType(p_var.GetType());
-        g_var->SetDataType(p_var.GetDataType());
+                << " type: " << ctx->GetType(p_names[i]);
+        ctx->SetType(pg_ig_names[i], ctx->GetType(p_names[i]));
+        ctx->SetDataType(pg_ig_names[i], ctx->GetDataType(p_names[i]));
       }
     }
   }
@@ -399,26 +388,41 @@ class WhileGradOpShapeInference : public framework::InferShapeBase {
     ctx->HasInputs(kOutputs);
     ctx->HasInputs(framework::GradVarName(kOutputs));
 
-    auto p_names = ctx->Inputs(kX);
     auto pg_ig_names = ctx->Outputs(kXGRAD);
-    auto var_types = ctx->GetInputsVarType(kX);
-    std::vector<std::string> names_to_set;
-    std::vector<framework::DDim> dims_to_set;
-    for (size_t i = 0; i < p_names.size(); ++i) {
+    std::vector<framework::InferShapeVarPtr> in_var_ptrs =
+        ctx->GetInputVarPtrs(kX);
+    std::vector<framework::InferShapeVarPtr> out_var_ptrs =
+        ctx->GetOutputVarPtrs(kXGRAD);
+    PADDLE_ENFORCE(in_var_ptrs.size() == out_var_ptrs.size());
+
+    for (size_t i = 0; i < in_var_ptrs.size(); ++i) {
       if (pg_ig_names[i] == framework::kEmptyVarName) {
         continue;
       }
-      auto dims = ctx->GetInputsElementDim(kX, i);
-      if (var_types[i] == framework::proto::VarType::LOD_TENSOR) {
-        names_to_set.push_back(pg_ig_names[i]);
-        dims_to_set.push_back(dims);
-      } else if (var_types[i] == framework::proto::VarType::LOD_TENSOR_ARRAY) {
-        // not sure how to set the dim of LOD_TENSOR_ARRAY
-        names_to_set.push_back(pg_ig_names[i]);
-        dims_to_set.push_back(dims);
+      if (ctx->IsRuntime()) {
+        framework::Variable *in_var =
+            boost::get<framework::Variable *>(in_var_ptrs[i]);
+        framework::Variable *out_var =
+            boost::get<framework::Variable *>(out_var_ptrs[i]);
+
+        auto type = framework::ToVarType(in_var->Type());
+        if (type == framework::proto::VarType::LOD_TENSOR) {
+          out_var->GetMutable<LoDTensor>()->Resize(
+              in_var->Get<framework::LoDTensor>().dims());
+        } else if (type == framework::proto::VarType::SELECTED_ROWS) {
+          out_var->GetMutable<framework::SelectedRows>()->set_height(
+              in_var->Get<framework::SelectedRows>().GetCompleteDims()[0]);
+        } else if (type == framework::proto::VarType::LOD_TENSOR_ARRAY) {
+          PADDLE_THROW("WhileGradOp doesn't support type %d",
+                       static_cast<int>(type));
+        }
+      } else {
+        framework::VarDesc *in_var =
+            boost::get<framework::VarDesc *>(in_var_ptrs[i]);
+        boost::get<framework::VarDesc *>(out_var_ptrs[i])
+            ->SetShape(in_var->GetShape());
       }
     }
-    ctx->SetDims(names_to_set, dims_to_set);
   }
 };
 

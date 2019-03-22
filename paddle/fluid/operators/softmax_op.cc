@@ -62,8 +62,7 @@ class SoftmaxOp : public framework::OperatorWithKernel {
     }
 #endif
 
-    auto input_data_type =
-        framework::ToDataType(ctx.Input<Tensor>("X")->type());
+    auto input_data_type = ctx.Input<Tensor>("X")->type();
     if (input_data_type == framework::proto::VarType::FP16) {
       PADDLE_ENFORCE(platform::is_gpu_place(ctx.GetPlace()),
                      "float16 can only be used on GPU place");
@@ -169,8 +168,8 @@ class SoftmaxOpGrad : public framework::OperatorWithKernel {
       layout_ = framework::DataLayout::kMKLDNN;
     }
 #endif
-    auto input_data_type = framework::ToDataType(
-        ctx.Input<Tensor>(framework::GradVarName("Out"))->type());
+    auto input_data_type =
+        ctx.Input<Tensor>(framework::GradVarName("Out"))->type();
     if (input_data_type == framework::proto::VarType::FP16) {
       PADDLE_ENFORCE(platform::is_gpu_place(ctx.GetPlace()),
                      "float16 can only be used on GPU place");
@@ -199,6 +198,21 @@ class SoftmaxOpGradMaker : public framework::SingleGradOpDescMaker {
     return std::unique_ptr<framework::OpDesc>(op);
   }
 };
+
+class SoftmaxInplaceInToOut : public framework::InplaceInToOut {
+ public:
+  using framework::InplaceInToOut::InplaceInToOut;
+
+ protected:
+  std::unordered_map<std::string, std::string> Apply(
+      const framework::OpDesc& op_desc,
+      framework::BlockDesc* block) const override {
+    return std::unordered_map<std::string, std::string>{
+        {"X", "Out"},
+    };
+  }
+};
+
 }  // namespace operators
 }  // namespace paddle
 
