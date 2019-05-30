@@ -25,7 +25,7 @@ $ git checkout incubate/lite
 基于`paddle-lite-mobile`镜像创建容器，并在容器内外建立目录映射关系：
 
 ```shell
-$ docker run -it --name <yourname> --net=host --privileged -v <your-directory-path>:<your-directory-path> paddle-lite-mobile bash
+$ docker run -it --privileged --name <yourname> --net=host --privileged -v <your-directory-path>:<your-directory-path> paddle-lite-mobile bash
 ```
 
 参考build.sh下的 cmake arm编译需要的平台。
@@ -51,7 +51,18 @@ make test_fc_compute_arm -j
 ```
 ### 在Android上执行
 
-#### 1. 在模拟器上执行
+#### 1. 创建模拟器（如果使用真机则跳过此步骤）
+
+```shell
+# 创建Android avd (armv8)
+$ echo n | avdmanager create avd -f -n myarmv8 -k "system-images;android-24;google_apis;arm64-v8a"
+# 启动Android armv8 emulator
+$ ${ANDROID_HOME}/emulator/emulator -avd myarmv8  -noaudio -no-window -gpu off -verbose &
+
+# armv7版本如下：
+# $ echo n | avdmanager create avd -f -n myarmv7 -k "system-images;android-24;google_apis;armeabi-v7a"
+# $ ${ANDROID_HOME}/emulator/emulator -avd myarmv7 -noaudio -no-window -gpu off -verbose &
+```
 #### 2. 上传编译文件到手机上
 
 键盘上`crtl+q+p`同时摁下，切换到容器外（容器还在后台运行），将刚刚编译出的程序`adb push`到手机上。USB线连接手机，确保`adb devices`可以找到手机设备。
@@ -97,3 +108,4 @@ $ adb devices
 List of devices attached
 5cb00b6 device
 ```
+
