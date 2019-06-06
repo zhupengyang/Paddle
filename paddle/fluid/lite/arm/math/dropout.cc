@@ -22,7 +22,7 @@ namespace math {
 
 template <>
 void dropout_down<float>(const T* din, T* dout, int num, float prob) {
-  const float scale = 1.0 - prob;
+  const float scale = 1.0f - prob;
   int cnt = num >> 4;
   int remain = num % 16;
   float32x4_t vscale = vdupq_n_f32(scale);
