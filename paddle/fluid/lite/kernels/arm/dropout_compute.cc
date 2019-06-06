@@ -24,8 +24,8 @@ namespace arm {
 void DropoutCompute::Run() {
   auto& param = Param<operators::DropoutParam>();
   const float* x_data = param.x->data<float>();
-  float* output_data = param.output->mutable_data<float>();
-  int num = param.x->dims().prodution();
+  float* out_data = param.output->mutable_data<float>();
+  int num = param.x->dims().production();
   const float prob_data = param.dropout_prob;
   if (param.dropout_implementation.compare(std::string({"downgrade_in_infer"})))
     lite::arm::math::dropout_down(x_data, out_data, num, prob_data);

@@ -25,24 +25,23 @@ namespace arm {
 
 TEST(dropout_arm, init) {
   DropoutCompute dropout;
-  ASSERT_EQ(scale.precision(), PRECISION(kFloat));
-  ASSERT_EQ(scale.target(), TARGET(kARM));
+  ASSERT_EQ(dropout.precision(), PRECISION(kFloat));
+  ASSERT_EQ(dropout.target(), TARGET(kARM));
 }
 
 TEST(dropout, retrive_op) {
   auto dropout =
       KernelRegistry::Global().Create<TARGET(kARM), PRECISION(kFloat)>(
           "dropout");
-  ASSERT_FALSE(scale.empty());
-  ASSERT_TRUE(scale.front());
+  ASSERT_FALSE(dropout.empty());
+  ASSERT_TRUE(dropout.front());
 }
 
 template <typename dtype>
 void dropout_compute_ref(const operators::DropoutParam& param) {
-  auto& param = Param<operators::DropoutParam>();
   const float* x_data = param.x->data<float>();
   float* output_data = param.output->mutable_data<float>();
-  int num = param.x->dims().prodution();
+  int num = param.x->dims().production();
   const float prob_data = param.dropout_prob;
   if (param.dropout_implementation.compare(
           std::string({"downgrade_in_infer"}))) {
@@ -84,7 +83,7 @@ TEST(dropout_arm, compute) {
               param.x = &x;
               param.output = &output;
               param.dropout_prob = prob;
-              param.dropout_implementation = &impl;
+              param.dropout_implementation = impl;
               dropout.SetParam(param);
               dropout.Run();
               param.output = &output_ref;
@@ -104,4 +103,4 @@ TEST(dropout_arm, compute) {
 }  // namespace lite
 }  // namespace paddle
 
-USE_LITE_KERNEL(scale, kARM, kFloat, kNCHW, def);
+USE_LITE_KERNEL(dropout, kARM, kFloat, kNCHW, def);

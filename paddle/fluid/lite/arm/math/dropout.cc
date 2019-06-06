@@ -21,7 +21,7 @@ namespace arm {
 namespace math {
 
 template <>
-void dropout_down<float>(const T* din, T* dout, int num, float prob) {
+void dropout_down<float>(const float* din, float* dout, int num, float prob) {
   const float scale = 1.0f - prob;
   int cnt = num >> 4;
   int remain = num % 16;
@@ -57,8 +57,8 @@ void dropout_down<float>(const T* din, T* dout, int num, float prob) {
   }
 }
 
-template <typename T>
-void dropout_up(const T* din, T* dout, int num) {
+template <>
+void dropout_up<float>(const float* din, float* dout, int num) {
   int cnt = num >> 4;
   int remain = num % 16;
 #pragma omp parallel for
