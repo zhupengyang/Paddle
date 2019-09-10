@@ -503,6 +503,7 @@ void BenchKernelVBroadcast() {
 #define BenchKernelGRUHtPart2 BenchKernelGRU
 
 using CPUPlace = paddle::platform::CPUPlace;
+using DDim = paddle::framework::DDim;
 
 #define BENCH_FP32_CPU(name)                                \
   BENCH_JITKERNEL(name, FP32, CPU) {                        \
@@ -551,6 +552,113 @@ BENCH_FP32_CPU(Softmax);
 BENCH_FP32_CPU(Sgd);
 BENCH_FP32_CPU(VBroadcast);
 
+void reshape(Tensor* in, Tensor* out, DDim out_size) {
+  auto in_data = in->data<float>();
+  out->Resize(out_size);
+  auto out_data = out->mutable_data<float>(CPUPlace());
+  memcpy(out_data, in_data, in->numel() * sizeof(float));
+}
+
+int data_index(std::vector<int> pos, DDim dims) {
+  int d1 = dims[1];
+  int d2 = dims[2];
+  int d3 = dims[3];
+  return pos[3] + pos[2] * d3 + pos[1] * d3 * d2 + pos[0] * d3 * d2 * d1;
+}
+
+std::vector<int> pos_trans(std::vector<int> in_pos, std::vector<int> axis) {
+  std::vector<int> out_pos(in_pos.size());
+  for (int i = 0; i < axis.size(); i++) {
+    out_pos[axis[i]] = in_pos[i];
+  }
+  return out_pos;
+}
+
+void transpose(Tensor* in, Tensor* out, std::vector<int> axis) {
+  auto in_dims = in->dims();
+  auto in_size = paddle::framework::vectorize2int(in_dims);
+  auto out_size = pos_trans(in_size, axis);
+  auto out_dims = paddle::framework::make_ddim(out_size);
+  out->Resize(out_dims);
+
+  auto in_data = in->data<float>();
+  auto out_data = out->mutable_data<float>(CPUPlace());
+
+  int input_n = in_dims[0];
+  int input_c = in_dims[1];
+  int input_h = in_dims[2];
+  int input_w = in_dims[3];
+
+  for (int n = 0; n < input_n; ++n) {
+    for (int c = 0; c < input_c; ++c) {
+      for (int h = 0; h < input_h; ++h) {
+        for (int w = 0; w < input_w; ++w) {
+          std::vector<int> in_pos{n, c, h, w};
+          std::vector<int> out_pos = pos_trans(in_pos, axis);
+          int in_index = data_index(in_pos, in_dims);
+          int out_index = data_index(out_pos, out_dims);
+          out_data[out_index] = in_data[in_index];
+        }
+      }
+    }
+  }
+}
+
+void scale(Tensor* in, Tensor* out, float scale, float bias) {
+  auto in_data = in->data<float>();
+  out->Resize(in->dims());
+  auto out_data = out->mutable_data<float>(CPUPlace());
+  for (int i = 0; i < in->numel(); i++) {
+    out_data[i] = in_data[i] * scale + bias;
+  }
+}
+
+float mul(float* in1, float* in2, int length) {
+  float ret = 0;
+  for (int i = 0; i < length; i++) {
+    ret += in1[i] * in2[i];
+  }
+  return ret;
+}
+// transpose: in1 false, in2 true
+void matmul(Tensor* in1, Tensor* in2, Tensor* out) {
+  auto in1_dims = in1->dims();
+  int in1_n = in1_dims[0];
+  int in1_c = in1_dims[1];
+  int in1_h = in1_dims[2];
+  int in1_w = in1_dims[3];
+  auto in2_dims = in2->dims();
+  int in2_c = in2_dims[1];
+  int in2_h = in2_dims[2];
+  int in2_w = in2_dims[3];
+  out->Resize(DDim({in1_n, in1_c, in1_h, in2_h}));
+  auto in1_data = in1->data<float>();
+  auto in2_data = in2->data<float>();
+  auto out_data = out->mutable_data<float>(CPUPlace());
+  for (int n = 0; n < in1_n; n++) {
+    for (int c = 0; c < in1_c; c++) {
+      for (int h = 0; h < in1_h; h++) {
+        for (int w = 0; w < in2_h; w++) {
+          int out_idx =
+              n * in1_c * in1_h * in2_h + c * in1_h * in2_h + h * in2_h + w;
+          float* in1_t = in1_data + n * in1_c * in1_h * in1_w +
+                         c * in1_h * in1_w + h * in1_h;
+          float* in2_t = in2_data + n * in2_c * in2_h * in2_w +
+                         c * in2_h * in2_w + w * in2_h;
+          out_data[out_idx] = mul(in1_t, in2_t, in1_w);
+        }
+      }
+    }
+  }
+}
+
+void test(Tensor* in1, Tensor* in2, Tensor* out) {
+  Tensor in1_1, in2_1, in2_2;
+  transpose(in1, &in1_1, std::vector<int>{0, 2, 1, 3});
+  transpose(in2, &in2_1, std::vector<int>{0, 2, 1, 3});
+  scale(&in2_1, &in2_2, 0.125, 0);
+  matmul(&in1_1, &in2_2, out);
+}
 // Benchmark all jit kernels including jitcode, mkl and refer.
 // To use this tool, run command: ./benchmark [options...]
 // Options:
@@ -559,10 +667,24 @@ BENCH_FP32_CPU(VBroadcast);
 //     --max_size: the max size would be tested
 //     --filter: the bench name would be run
 int main(int argc, char* argv[]) {
-  gflags::ParseCommandLineFlags(&argc, &argv, true);
-  google::InitGoogleLogging(argv[0]);
-  LOG(INFO) << "Burning " << FLAGS_burning << " times, Repeat " << FLAGS_repeat
-            << " times.";
+  Tensor in1, in2;
+  DDim in_dims{1, 128, 12, 64};
+  in1.Resize(in_dims);
+  in2.Resize(in_dims);
+  auto in1_data = in1.mutable_data<float>(CPUPlace());
+  auto in2_data = in2.mutable_data<float>(CPUPlace());
+  for (int i = 0; i < in1.numel(); i++) {
+    in1_data[i] = 1;
+    in2_data[i] = 1;
+  }
+  Tensor out;
+  test(&in1, &in2, &out);
 
-  RUN_ALL_BENCHMARK();
+  // gflags::ParseCommandLineFlags(&argc, &argv, true);
+  // google::InitGoogleLogging(argv[0]);
+  // LOG(INFO) << "Burning " << FLAGS_burning << " times, Repeat "
+  // << FLAGS_repeat
+  //           << " times.";
+
+  // RUN_ALL_BENCHMARK();
 }
