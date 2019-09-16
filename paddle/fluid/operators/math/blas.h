@@ -134,6 +134,10 @@ class Blas {
               T* C) const;
 
   template <typename T>
+  void MatMul(const int M, const int N, const int K, const T* A, const T* B,
+              T* C, int padding) const;
+
+  template <typename T>
   void MatMul(const framework::Tensor& mat_a, bool trans_a,
               const framework::Tensor& mat_b, bool trans_b, T alpha,
               framework::Tensor* mat_out, T beta) const;

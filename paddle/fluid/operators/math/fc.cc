@@ -38,7 +38,7 @@ class FCFunctor<platform::CPUDeviceContext, T> {
     for (int i = 0; i < M; i++) {
       memcpy(X1_data + i * (K + 4), X + i * K, K * sizeof(X[0]));
     }
-    blas.MatMul(M, N, K, X1_data, W, Y1_data);
+    blas.MatMul(M, N, K, X1_data, W, Y1_data, 4);
     if (B == NULL) {
       return;
     }
