@@ -27,7 +27,26 @@ class FCFunctor<platform::CPUDeviceContext, T> {
                   const int N, const int K, const T* X, const T* W, T* Y,
                   const T* B = nullptr, bool relu = false) {
     auto blas = math::GetBlas<platform::CPUDeviceContext, T>(context);
-    blas.MatMul(M, N, K, X, W, Y);
+    framework::Tensor X1, W1, Y1;
+    X1.Resize({M * (K + 4)});
+    W1.Resize({K * (N + 4)});
+    Y1.Resize({M * (N + 4)});
+    T* X1_data = X1.mutable_data<T>(platform::CPUPlace());
+    T* W1_data = W1.mutable_data<T>(platform::CPUPlace());
+    T* Y1_data = Y1.mutable_data<T>(platform::CPUPlace());
+#ifdef PADDLE_WITH_MKLML
+#pragma omp parallel for
+#endif
+    for (int i = 0; i < M; i++) {
+      memcpy(X1_data + i * (K + 4), X + i * K, K * sizeof(X[0]));
+    }
+#ifdef PADDLE_WITH_MKLML
+#pragma omp parallel for
+#endif
+    for (int i = 0; i < K; i++) {
+      memcpy(W1_data + i * (N + 4), W + i * N, N * sizeof(W[0]));
+    }
+    blas.MatMul(M, N, K, X1_data, W1_data, Y1_data);
     if (B == NULL) {
       return;
     }
@@ -47,8 +66,9 @@ class FCFunctor<platform::CPUDeviceContext, T> {
 #pragma omp parallel for
 #endif
       for (int i = 0; i < M; i++) {
+        T* src = Y1_data + i * (N + 4);
         T* dst = Y + i * N;
-        compute(B, dst, dst, N);
+        compute(B, src, dst, N);
       }
     }
   }
