@@ -656,7 +656,7 @@ void Blas<platform::CPUDeviceContext>::MatMul(const int M, const int N,
                                               const int K, const T *A,
                                               const T *B, T *C,
                                               const int padding) const {
-  // padding=4;
+  // MatMul with padding
   CBlas<T>::GEMM(CblasRowMajor, CblasNoTrans, CblasNoTrans, M, N, K,
                  static_cast<T>(1), A, K + padding, B, N + padding,
                  static_cast<T>(0), C, N + padding);

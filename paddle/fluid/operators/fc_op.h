@@ -63,7 +63,10 @@ class FCOpKernel : public framework::OpKernel<T> {
     bool with_relu =
         (ctx.Attr<std::string>("activation_type") == "relu") ? true : false;
 
-    auto w_dims = framework::DDim{w->dims()[0] - 4, w->dims()[1] - 4};
+    auto w_dims = w->dims();
+    if ((w_dims[0] - 4) % 128 == 0 && (w_dims[1] - 4) % 128) {
+      w_dims = framework::DDim{w_dims[0] - 4, w_dims[0] - 4};
+    }
 
     std::vector<int64_t> output_dims;
     FCOutputSize(input->dims(), w_dims, output_dims, in_num_col_dims);
