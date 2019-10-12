@@ -118,13 +118,22 @@ create_test_fp16(TestConcatOp5)
 class TestConcatOpError(OpTest):
     def test_errors(self):
         with program_guard(Program(), Program()):
-            # The input type of concat_op must be Variable.
-            x1 = fluid.create_lod_tensor(
+            # The input type of concat_op should be list.
+            x1 = fluid.layers.data(shape=[4], dtype='int32')
+            fluid.layers.concat(x1)
+            # The item in input must be Variable.
+            x2 = fluid.create_lod_tensor(
                 np.array([[-1]]), [[1]], fluid.CPUPlace())
-            self.assertRaises(TypeError, fluid.layers.concat, x1)
+            x3 = fluid.create_lod_tensor(
+                np.array([[-1]]), [[1]], fluid.CPUPlace())
+            self.assertRaises(TypeError, fluid.layers.concat, [x2, x3])
             # The input dtype of concat_op must be float16(only support on GPU), float32, float64, int32, int64.
-            x2 = fluid.layers.data(name='x2', shape=[4], dtype='uint8')
-            self.assertRaises(TypeError, fluid.layers.concat, x2)
+            x4 = fluid.layers.data(shape=[4], dtype='uint8')
+            x5 = fluid.layers.data(shape=[4], dtype='uint8')
+            self.assertRaises(TypeError, fluid.layers.concat, [x4, x5])
+            x6 = fluid.layers.data(shape=[4], dtype='float16')
+            x7 = fluid.layers.data(shape=[4], dtype='flaot16')
+            self.assertRaises(TypeError, fluid.layers.concat, [x6, x7])
 
 
 if __name__ == '__main__':
