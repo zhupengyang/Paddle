@@ -33,6 +33,7 @@ from paddle.fluid.executor import Executor
 from paddle.fluid.framework import Program, OpProtoHolder, Variable
 from testsuite import create_op, set_input, append_input_output, append_loss_ops
 from paddle.fluid import unique_name
+from check_shape_whitelist import need_to_fix_check_shape_op_list
 
 
 def _set_use_system_allocator(value=None):
@@ -169,7 +170,7 @@ class OpTest(unittest.TestCase):
         random.setstate(cls._py_rand_state)
         _set_use_system_allocator(cls._use_system_allocator)
 
-        if hasattr(get_numeric_gradient, 'check_shape_time'
+        if OpTest.op_type not in need_to_fix_check_shape_op_list and hasattr(get_numeric_gradient, 'check_shape_time'
                    ) and get_numeric_gradient.check_shape_time == 0:
             raise AssertionError(
                 "At least one input's shape should be large than 100 for " +
