@@ -54,7 +54,7 @@ class TestAddPositionEncodingTensorOp(OpTest):
         """
         self.alpha = 0.6
         self.beta = 0.5
-        self.x = np.random.uniform(0.1, 1, [2, 4, 4]).astype(self.dtype)
+        self.x = np.random.uniform(0.1, 1, [7, 4, 4]).astype(self.dtype)
         self.out = np.copy(self.x)
 
         batch_size = self.x.shape[0]
@@ -109,7 +109,7 @@ class TestAddPositionEncodingLoDTensorOp(OpTest):
         """
         self.alpha = 0.6
         self.beta = 0.5
-        self.x = np.random.uniform(0.1, 1, [10, 4]).astype(self.dtype)
+        self.x = np.random.uniform(0.1, 1, [10, 12]).astype(self.dtype)
         self.lod = [[3, 7]]
         self.out = np.copy(self.x)
 
