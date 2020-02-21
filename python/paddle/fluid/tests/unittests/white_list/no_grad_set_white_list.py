@@ -46,7 +46,6 @@ NEED_TO_FIX_OP_LIST = [
     'fused_emb_seq_pool',
     'fused_embedding_seq_pool',
     'gru_unit',
-    'hierarchical_sigmoid',
     'hsigmoid',
     'huber_loss',
     'instance_norm',

@@ -33,7 +33,6 @@ NO_FP64_CHECK_GRAD_OP_LIST = [
     'dropout', \
     'elementwise_max', \
     'fused_elemwise_activation', \
-    'hierarchical_sigmoid', \
     'hinge_loss', \
     'huber_loss', \
     'im2sequence', \
