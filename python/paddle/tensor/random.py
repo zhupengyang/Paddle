@@ -406,7 +406,7 @@ def randperm(n,
     return out
 
 
-def rand(shape, out=None, dtype=None, device=None, stop_gradient=True):
+def rand(shape, dtype=None, name=None):
     """
 	:alias_main: paddle.rand
 	:alias: paddle.rand,paddle.tensor.rand,paddle.tensor.random.rand
@@ -424,22 +424,19 @@ def rand(shape, out=None, dtype=None, device=None, stop_gradient=True):
           result=[[0.8505902, 0.8397286]]
 
     Args:
-        shape(list|tuple|Variable): Shape of the Tensor to be created.
-                The data type is ``int32`` or ``int64`` . If ``shape`` is a list or tuple,
-                the elements of it should be integers or Tensors with shape [1].
-                If ``shape`` is a Variable, it should be an 1-D Tensor .
-        out(Variable, optional): Optional output which can be any created
-            Variable that meets the requirements to store the result of operation.
-            if out is None, a new Varibale will be create to store the result.
-        dtype(np.dtype|core.VarDesc.VarType|str, optional): Data type of the output tensor
-            which can be float32, float64, if dytpe is `None`, the data
-            type of created tensor is `float32`
-        device(str, optional): This parameter specifies that the Tensor is created
-            on the GPU or CPU.
-        stop_gradient(bool, optional): Indicating if we stop gradient from current(out) Variable,
-            default value is True.
+        shape(list|tuple|Variable): Shape of the Tensor to be created. The data
+            type is ``int32`` or ``int64`` . If ``shape`` is a list or tuple,
+            the elements of it should be integers or Tensors with shape [1]. If
+            ``shape`` is a Variable, it should be an 1-D Tensor .
+        dtype(np.dtype|core.VarDesc.VarType|str, optional): Data type of the
+            output tensor which can be float32, float64, if dytpe is `None`,
+            the data type of created tensor is `float32`
+        name(str, optional): The default value is None. Normally there is no
+            need for user to set this property. For more information, please
+            refer to :ref:`api_guide_Name`.
     Returns:
-        Variable: A Tensor of the specified shape filled with random numbers from a uniform distribution on the interval [0, 1).
+        Variable: A Tensor of the specified shape filled with random numbers
+        from a uniform distribution on the interval [0, 1).
 
     Raises:
         TypeError: The shape type should be list or tupple or Variable.
@@ -469,32 +466,4 @@ def rand(shape, out=None, dtype=None, device=None, stop_gradient=True):
     """
     if dtype is None:
         dtype = 'float32'
-
-    check_dtype(dtype, 'dtype', ['float32', 'float64'], 'rand')
-
-    check_type(shape, 'shape', (Variable, list, tuple), 'rand')
-    if isinstance(shape, Variable):
-        check_variable_and_dtype(shape, 'shape', ['int32', 'int64'], 'rand')
-    elif isinstance(shape, (list, tuple)):
-        for i, _shape in enumerate(shape):
-            if not isinstance(_shape, Variable):
-                check_type(_shape, '_shape', (int), 'rand')
-            else:
-                check_variable_and_dtype(_shape, 'shape[' + str(i) + ']',
-                                         ['int32', 'int64'], 'rand')
-
-    if device not in [None, 'cpu', 'gpu']:
-        raise ValueError(
-            "The input device should in [None, 'cpu', 'gpu'], but received {}".
-            format(device))
-
-    helper = LayerHelper("rand", **locals())
-    if out is None:
-        out = helper.create_variable_for_type_inference(dtype=dtype)
-    else:
-        check_variable_and_dtype(out, 'out', [dtype], 'rand')
-    out.stop_gradient = stop_gradient
-
-    with device_guard(device):
-        out = uniform_random(shape, dtype, min=0., max=1.0)
-    return out
+    return uniform_random(shape, dtype, min=0.0, max=1.0, name=name)
