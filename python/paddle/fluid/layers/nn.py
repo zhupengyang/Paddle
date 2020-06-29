@@ -10503,11 +10503,7 @@ def gaussian_random(shape, mean=0.0, std=1.0, seed=0, dtype='float32'):
 
     inputs = {}
     utils._get_shape_tensor_inputs(
-        inputs=inputs,
-        helper=helper,
-        attrs=attrs,
-        shape=shape,
-        op_type='gaussian_random')
+        inputs=inputs, attrs=attrs, shape=shape, op_type='gaussian_random')
 
     helper.append_op(
         type='gaussian_random',
@@ -14932,49 +14928,14 @@ def uniform_random(shape, dtype='float32', min=-1.0, max=1.0, seed=0,
         dtype = convert_np_dtype_to_dtype_(dtype)
     check_dtype(dtype, 'dtype', ('float32', 'float64'), 'uniform_random')
 
-    def get_shape_tensor_list(list_shape):
-        shape_tensor_list = []
-        for dim_idx, dim in enumerate(list_shape):
-            if isinstance(dim, Variable):
-                check_variable_and_dtype(dim, 'shape[' + str(dim_idx) + ']',
-                                         ['int32', 'int64'], 'uniform_random')
-                dim.stop_gradient = True
-                shape_tensor_list.append(dim)
-            else:
-                check_type(dim, 'shape[' + str(dim_idx) + ']', (int),
-                           'uniform_random')
-                temp_out = helper.create_variable_for_type_inference('int64')
-                fill_constant([1], 'int64', dim, force_cpu=True, out=temp_out)
-                shape_tensor_list.append(temp_out)
-        return shape_tensor_list
-
-    def get_attr_shape(list_shape):
-        attrs_shape = []
-        for dim_idx, dim in enumerate(list_shape):
-            check_type(dim, 'shape[' + str(dim_idx) + ']', (int),
-                       'uniform_random')
-            assert dim > 0, (
-                "Each dimension size given in shape must not be negative "
-                "except one unknown dimension.")
-            attrs_shape.append(dim)
-        return attrs_shape
-
     helper = LayerHelper("uniform_random", **locals())
     inputs = dict()
     attrs = {'seed': seed, 'min': min, 'max': max, 'dtype': dtype}
     if in_dygraph_mode():
         attrs['shape'] = shape
     else:
-        if isinstance(shape, Variable):
-            shape.stop_gradient = True
-            inputs["ShapeTensor"] = shape
-        elif isinstance(shape, (list, tuple)):
-            assert len(shape) > 0, (
-                "The size of argument(shape) can't be zero.")
-            if utils._contain_var(shape):
-                inputs['ShapeTensorList'] = get_shape_tensor_list(shape)
-            else:
-                attrs["shape"] = get_attr_shape(shape)
+        utils._get_shape_tensor_inputs(
+            inputs=inputs, attrs=attrs, shape=shape, op_type='uniform_random')
 
     out = helper.create_variable_for_type_inference(dtype)
     helper.append_op(
