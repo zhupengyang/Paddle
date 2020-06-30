@@ -10495,7 +10495,7 @@ def gaussian_random(shape,
     """
 
     check_type(shape, 'shape', (list, tuple, Variable), 'gaussian_random')
-    check_type(shape, 'shape', (Variable, list, tuple), 'gaussian_random')
+    check_dtype(dtype, 'dtype', ['float32', 'float64'], 'gaussian_random')
     dtype = convert_np_dtype_to_dtype_(dtype)
 
     inputs = {}
