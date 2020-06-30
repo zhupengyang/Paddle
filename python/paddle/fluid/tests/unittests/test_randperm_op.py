@@ -50,8 +50,6 @@ class TestRandpermOp(OpTest):
         self.op_type = "randperm"
         self.n = 200
         self.dtype = "int64"
-        self.device = None
-        self.seed = 0
 
         self.inputs = {}
         self.outputs = {"Out": np.zeros((self.n)).astype(self.dtype)}
@@ -59,8 +57,6 @@ class TestRandpermOp(OpTest):
         self.attrs = {
             "n": self.n,
             "dtype": convert_dtype(self.dtype),
-            "device": self.device,
-            "seed": self.seed,
         }
 
     def init_attrs(self):
@@ -89,27 +85,6 @@ class TestRandpermOp_attr_int32(TestRandpermOp):
         self.dtype = "int32"
 
 
-class TestRandpermOp_attr_device_cpu(TestRandpermOp):
-    """ Test randperm op for cpu device. """
-
-    def init_attrs(self):
-        self.device = "cpu"
-
-
-class TestRandpermOp_attr_device_gpu(TestRandpermOp):
-    """ Test randperm op for gpu device. """
-
-    def init_attrs(self):
-        self.device = "gpu"
-
-
-class TestRandpermOp_attr_seed(TestRandpermOp):
-    """ Test randperm op for attr seed. """
-
-    def init_attrs(self):
-        self.seed = 10
-
-
 class TestRandpermOpError(unittest.TestCase):
     """ Test randperm op for raise error. """
 
@@ -118,42 +93,15 @@ class TestRandpermOpError(unittest.TestCase):
         start_prog = Program()
         with program_guard(main_prog, start_prog):
 
-            def test_Variable():
-                out = np.arange(10)
-                paddle.randperm(n=10, out=out)
-
-            self.assertRaises(TypeError, test_Variable)
-
             def test_value():
                 paddle.randperm(n=-3)
 
             self.assertRaises(ValueError, test_value)
 
+            def test_dtype():
+                paddle.randperm(n=10, dtype='float32')
 
-class TestRandpermOp_attr_out(unittest.TestCase):
-    """ Test randperm op for attr out. """
-
-    def test_attr_tensor_API(self):
-        startup_program = fluid.Program()
-        train_program = fluid.Program()
-        with fluid.program_guard(train_program, startup_program):
-            n = 10
-            data_1 = fluid.layers.fill_constant([n], "int64", 3)
-            paddle.randperm(n=n, out=data_1)
-
-            data_2 = paddle.randperm(n=n, dtype="int32", device="cpu")
-
-            place = fluid.CPUPlace()
-            if fluid.core.is_compiled_with_cuda():
-                place = fluid.CUDAPlace(0)
-            exe = fluid.Executor(place)
-
-            exe.run(startup_program)
-            outs = exe.run(train_program, fetch_list=[data_1, data_2])
-
-            out_np = np.array(outs[0])
-            self.assertTrue(
-                check_randperm_out(n, out_np), msg=error_msg(out_np))
+            self.assertRaises(TypeError, test_dtype)
 
 
 class TestRandpermDygraphMode(unittest.TestCase):
@@ -165,7 +113,7 @@ class TestRandpermDygraphMode(unittest.TestCase):
             self.assertTrue(
                 check_randperm_out(n, data_1_np), msg=error_msg(data_1_np))
 
-            data_2 = paddle.randperm(n, dtype="int32", device="cpu")
+            data_2 = paddle.randperm(n, dtype="int32")
             data_2_np = data_2.numpy()
             self.assertTrue(
                 check_randperm_out(n, data_2_np), msg=error_msg(data_2_np))
