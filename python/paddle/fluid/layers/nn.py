@@ -10487,7 +10487,9 @@ def gaussian_random(shape, mean=0.0, std=1.0, seed=0, dtype='float32'):
     """
 
     check_type(shape, 'shape', (list, tuple, Variable), 'gaussian_random')
-    dtype = convert_np_dtype_to_dtype_(dtype)
+    if not isinstance(dtype, core.VarDesc.VarType):
+        dtype = convert_np_dtype_to_dtype_(dtype)
+    check_dtype(dtype, 'dtype', ['float32', 'float64'], 'gaussian_random')
 
     inputs = {}
     attrs = {
