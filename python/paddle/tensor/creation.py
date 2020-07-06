@@ -364,7 +364,7 @@ def zeros(shape, dtype, out=None, device=None):
     return fill_constant(value=0.0, shape=shape, dtype=dtype, out=out)
 
 
-def zeros_like(input, dtype=None, device=None, name=None):
+def zeros_like(x, dtype=None, name=None):
     """
 	:alias_main: paddle.zeros_like
 	:alias: paddle.zeros_like,paddle.tensor.zeros_like,paddle.tensor.creation.zeros_like
@@ -397,39 +397,25 @@ def zeros_like(input, dtype=None, device=None, name=None):
           data1 = paddle.ones_like(input=x, device="gpu") #data1=[1.0, 1.0. 1.0]
 
     """
+    if dtype is None:
+        dtype = x.dtype
+    if not isinstance(dtype, core.VarDesc.VarType):
+        dtype = convert_np_dtype_to_dtype_(dtype)
+
+    if in_dygraph_mode():
+        return core.ops.fill_any_like(x, 'value', 0., 'dtype', dtype)
+
+    check_dtype(dtype, 'dtype',
+                ['bool', 'float32', 'float64', 'int32', 'int64'], 'zeros_like')
 
     helper = LayerHelper("zeros_like", **locals())
-
-    attrs = {"value": 0.0}
-    var_dtype = None
-    if dtype is not None:
-        check_dtype(dtype, 'create data type',
-                    ['bool', 'float32', 'float64', 'int32', 'int64'],
-                    'zeros_like')
-        var_dtype = convert_np_dtype_to_dtype_(dtype)
-        attrs["dtype"] = var_dtype
-    else:
-        var_dtype = input.dtype
-
-    out = helper.create_variable_for_type_inference(dtype=var_dtype)
-
-    if device is not None:
-        if device not in ['cpu', 'gpu']:
-            raise ValueError(
-                "The value of 'device' in zeros_op must be cpu or gpu, but received %s."
-                % (device))
-        with fluid.device_guard(device):
-            helper.append_op(
-                type='fill_any_like',
-                inputs={'X': [input]},
-                attrs=attrs,
-                outputs={'Out': [out]})
-            return out
+    attrs = {"value": 0., "dtype": dtype}
+    out = helper.create_variable_for_type_inference(dtype)
     helper.append_op(
         type='fill_any_like',
-        inputs={'X': [input]},
+        inputs={'X': x},
         attrs=attrs,
-        outputs={'Out': [out]})
+        outputs={'Out': out})
     out.stop_gradient = True
     return out
 
