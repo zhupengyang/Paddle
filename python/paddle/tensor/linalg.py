@@ -171,19 +171,20 @@ def matmul(x, y, transpose_x=False, transpose_y=False, alpha=1.0, name=None):
     return out
 
 
-def norm(input, p='fro', axis=None, keepdim=False, out=None, name=None):
+def norm(x, p='fro', axis=None, keepdim=False, name=None):
     """
-	:alias_main: paddle.norm
-	:alias: paddle.norm,paddle.tensor.norm,paddle.tensor.linalg.norm
-
-    Returns the matrix norm (Frobenius) or vector norm (the 1-norm, the Euclidean
-    or 2-norm, and in general the p-norm for p > 0) of a given tensor.
+    Compute the matrix norm or vector norm of a given tensor along ``axis`` .
 
     Args:
-        input (Variable): The input tensor could be N-D tensor, and the input data
-            type could be float32 or float64.
-        p (float|string, optional): Order of the norm. Supported values are `fro`, `1`, `2`,
-            and any positive real number yielding the corresponding p-norm.
+        x (Tensor): The input tensor with the data type float32, float64.
+        p (int|float|string, optional): Order of the norm. Supported values are
+            `fro`, 0, 1, 2, float('inf'), float('-inf'), 'nuc', other(include int/float greater than 0). Default is 'fro'.
+            |p      |matrix norm    |vector norm    |
+            |---|---|---|
+            |None   |Frobenius norm |2-norm         |
+            |'fro'  |Frobenius norm |2-norm         |
+            |'nuc'  |nuclear norm   |-              |
+            |others |as vec norm when dim is None   |sum(abs(x)**ord)**(1./ord) |
         axis (int|list, optional): The axis on which to apply norm operation. If axis is int
             or list with only one element, the vector norm is computed over the axis.
             If axis is a list with two elements, the matrix norm is computed over the axis.
@@ -192,8 +193,6 @@ def norm(input, p='fro', axis=None, keepdim=False, out=None, name=None):
             output Tensor. The result tensor will have fewer dimension
             than the :attr:`input` unless :attr:`keepdim` is true, default
             value is False.
-        out (Variable, optional): The output tensor, default value is None. It's data type
-            must be the same as the input Tensor.
         name (str, optional): The default value is None. Normally there is no need for
             user to set this property. For more information, please refer to :ref:`api_guide_Name`.
 
@@ -219,54 +218,44 @@ def norm(input, p='fro', axis=None, keepdim=False, out=None, name=None):
             out_pnorm = paddle.norm(x, p=2, axis=-1)
     """
 
-    def frobenius_norm(input, dim=None, keepdim=False, out=None, name=None):
+    def frobenius_norm(x, axis=None, keepdim=False, name=None):
         """
         The frobenius norm OP is to calculate the frobenius norm of certain two dimensions of Tensor `input`.
         Args:
-          input (Variable): Tensor, data type float32, float64.
+          x (Tensor): Tensor, data type float32, float64.
           dim (list, optional): None for last two dimensions.
           keepdim (bool, optional): Whether keep the dimensions as the `input`, Default False.
           out (Variable, optional): The tensor variable storing the output.
         """
-        if dim is not None and not (isinstance(dim, list) and len(dim) == 2):
-            raise ValueError(
-                "The dim of frobenius norm op should be None or two elements list!"
-            )
-        attrs = {
-            'dim': dim if dim != None else [-2, -1],
-            'keep_dim': keepdim,
-            'reduce_all': False
-        }
-        if len(attrs['dim']) == len(input.shape):
-            attrs['reduce_all'] = True
-        check_variable_and_dtype(input, 'input', ['float32', 'float64'],
-                                 'frobenius_norm')
-
-        helper = LayerHelper('frobenius_norm', **locals())
-        if out is None:
-            out = helper.create_variable_for_type_inference(
-                dtype=helper.input_dtype())
+        if axis is None:
+            axis = [-2, -1]
+        elif isinstant(axis, list, tuple):
+            assert len(
+                axis
+            ) == 2, "If p is 'fro' and axis is list or tuple, axis should only have 2 elements."
         else:
-            check_type(out, 'out', (Variable), 'frobenius_norm')
-            check_dtype(
-                out.dtype, out.name,
-                convert_dtype(input.dtype), 'frobenius_norm',
-                '(The out data type in frobenius_norm must be the same with input data type.)'
-            )
+            raise ValueError(
+                "If p is 'fro', axis should be None or two elements list.")
 
+        reduce_all = True if len(x.shape) == 2 else False
+        if in_dygraph_mode:
+            return core.ops.frobenius_norm(x, 'dim', axis, 'keep_dim', keepdim,
+                                           'reduce_all', reduce_all)
+
+        check_variable_and_dtype(
+            x, 'x', ['float32', 'float64'], 'norm',
+            "If p is 'fro', the data type of x only support float32, float64")
+        helper = LayerHelper('frobenius_norm', **locals())
+        attrs = {'dim': axis, 'keep_dim': keepdim, 'reduce_all': reduce_all}
+        out = helper.create_variable_for_type_inference(x.dtype)
         helper.append_op(
             type='frobenius_norm',
-            inputs={'X': input},
+            inputs={'X': x},
             outputs={'Out': out},
             attrs=attrs)
         return out
 
-    def vector_norm(input,
-                    porder=None,
-                    axis=None,
-                    keepdim=False,
-                    out=None,
-                    name=None):
+    def vector_norm(x, porder=2, axis=None, keepdim=False, name=None):
         """
         Calculate the p-order vector norm for certain  dimension of Tensor `input`.
         Args:
