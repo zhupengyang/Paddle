@@ -19,12 +19,24 @@
 namespace paddle {
 namespace operators {
 
+template <typename T, int MajorType = Eigen::RowMajor,
+          typename IndexType = Eigen::DenseIndex>
+using EigenScalar = framework::EigenScalar<T, MajorType, IndexType>;
+
 struct LogsumexpFunctor {
   template <typename DeviceContext, typename X, typename Y, typename Dim>
   void operator()(const DeviceContext& place, X* x, Y* y, const Dim& dim) {
     auto x_max = x->maximum(dim);
-    y->device(place) =
-        (*x - x_max.eval().broadcast(dim)).exp().sum(dim) + x_max;
+    y->device(place) = (*x - x_max).exp().sum(dim).log();
+    y->device(place) = x_max + *y;
+  }
+
+  template <typename DeviceContext, typename X, typename Y = EigenScalar,
+            typename Dim>
+  void operator()(const DeviceContext& place, X* x, Y* y, const Dim& dim) {
+    auto x_max = x->maximum(dim);
+    y->device(place) = (*x - x_max).exp().sum(dim).log();
+    y->device(place) = x_max + *y;
   }
 };
 
