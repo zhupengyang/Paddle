@@ -52,8 +52,7 @@ REGISTER_OPERATOR(logsumexp, ops::ReduceOp, ops::LogsumexpOpMaker,
 REGISTER_OPERATOR(logsumexp_grad, ops::ReduceGradOp);
 
 REGISTER_OP_CPU_KERNEL(
-    logsumexp,
-    ops::LogsumexpKernel<paddle::platform::CPUDeviceContext, float, >,
+    logsumexp, ops::LogsumexpKernel<paddle::platform::CPUDeviceContext, float>,
     ops::LogsumexpKernel<paddle::platform::CPUDeviceContext, double>);
 REGISTER_OP_CPU_KERNEL(
     logsumexp_grad, ops::ReduceGradKernel<paddle::platform::CPUDeviceContext,

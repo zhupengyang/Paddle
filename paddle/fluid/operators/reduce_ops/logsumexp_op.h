@@ -22,7 +22,7 @@ namespace operators {
 
 #define LOGSUMEXP_DIM(NDIM, RDIM)                                         \
   if (ndim == NDIM && rdim == RDIM) {                                     \
-    LogsumexpFunctor<DeviceContext, OutT, NDIM, RDIM>(                    \
+    LogsumexpFunctor<DeviceContext, T, NDIM, RDIM>(                       \
         context.template device_context<DeviceContext>(), *input, output, \
         dims, keep_dim);                                                  \
     return;                                                               \
@@ -38,7 +38,7 @@ void LogsumexpFunctor(const DeviceContext& context,
   }
 
   auto reshape_dim = Eigen::array<int, D>();
-  auto input_dim = input.dims();
+  auto input_dim = framework::vectorize(input.dims());
   for (size_t i = 0; i < input_dim.size(); i++) {
     reshape_dim[i] = input_dim[i];
   }
@@ -58,8 +58,8 @@ void LogsumexpFunctor(const DeviceContext& context,
   if (keep_dim) {
     const int kDelFlag = -2;
     auto dims_vector = framework::vectorize(out_dims);
-    for (size_t i = 0; i < dims_ref.size(); ++i) {
-      dims_vector[dims_ref[i]] = kDelFlag;
+    for (size_t i = 0; i < dims.size(); ++i) {
+      dims_vector[dims[i]] = kDelFlag;
     }
     dims_vector.erase(remove(dims_vector.begin(), dims_vector.end(), kDelFlag),
                       dims_vector.end());
@@ -68,6 +68,7 @@ void LogsumexpFunctor(const DeviceContext& context,
 
   auto x = EigenTensor<T, D>::From(input);
   auto out = EigenTensor<T, (D - R_D)>::From(*output, out_dims);
+  auto& place = *context.eigen_device();
   auto x_max = x.maximum(reshape_dim);
   out.device(place) = (x - x_max.reshape(reshape_dim).broadcast(broadcast_dim))
                           .exp()
@@ -86,21 +87,20 @@ class LogsumexpKernel : public framework::OpKernel<T> {
     auto dims = context.Attr<std::vector<int>>("dim");
     bool keep_dim = context.Attr<bool>("keep_dim");
 
-    const auto& input_dim_size = input->dims().size();
+    const size_t input_dim_size = input->dims().size();
     if (dims.size() == input_dim_size) {
-      reduce = True;
+      reduce_all = true;
     }
 
-    output->mutable_data<OutT>(context.GetPlace());
+    output->mutable_data<T>(context.GetPlace());
     if (reduce_all) {
-      auto x = EigenVector<OutT>::Flatten(*input);
-      auto out = EigenScalar<OutT>::Flatten(*output);
+      auto x = EigenVector<T>::Flatten(*input);
+      auto out = EigenScalar<T>::From(*output);
       auto& place =
           *context.template device_context<DeviceContext>().eigen_device();
 
       auto broadcast_dim = x.dimensions();
       auto reduce_dim = Eigen::array<int, 1>({{0}});
-      auto x_dim = Eigen::array<int, 1>({{0}});
       auto x_max = x.maximum(reduce_dim);
       out.device(place) =
           (x - x_max.broadcast(broadcast_dim)).exp().sum(reduce_dim).log() +
@@ -125,7 +125,7 @@ class LogsumexpKernel : public framework::OpKernel<T> {
       LOGSUMEXP_DIM(2, 1)
     }
   }
-}
+};
 
 struct LogsumexpGradFunctor {
   template <typename DeviceContext, typename X, typename Y, typename DX,
