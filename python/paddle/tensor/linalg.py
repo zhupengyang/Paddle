@@ -185,7 +185,6 @@ def frobenius_norm(x, axis=None, keepdim=False, name=None):
             x, 'x', ['float32', 'float64'], 'norm',
             "If p is 'fro', the data type of x only support float32, float64")
 
-
     if (axis is None and len(x.shape)!=2) \
         or isinstance(axis, int) \
         or (isinstance(axis, (list, tuple)) and len(axis)!=2):
@@ -195,7 +194,7 @@ def frobenius_norm(x, axis=None, keepdim=False, name=None):
         axis = [0, 1]
     reduce_all = True if len(x.shape) == 2 else False
 
-    if in_dygraph_mode:
+    if in_dygraph_mode():
         return core.ops.frobenius_norm(x, 'dim', axis, 'keep_dim', keepdim,
                                        'reduce_all', reduce_all)
 
@@ -223,7 +222,9 @@ def vector_norm(x, porder=2, axis=None, keepdim=False, name=None):
         check_variable_and_dtype(x, 'x', ['float32', 'float64'], 'norm')
         check_type(porder, 'porder', (float, int), 'norm',
                    'If p is not a string,p should be float or int.')
-        assert porder > 0, 'p should be greater than or equal to 0.'
+        assert porder == float(
+            '-inf'
+        ) or porder >= 0, 'If p is not -inf, p should be greater than or equal to 0.'
         if axis is not None:
             check_type(axis, 'axis', (int, list, tuple), 'norm')
             if isinstance(axis, (list, tuple)):
@@ -232,7 +233,7 @@ def vector_norm(x, porder=2, axis=None, keepdim=False, name=None):
 
     if len(x.shape) == 1:
         axis = 0
-    if isinstance(axis, (list, tuple)) and len(axis) == 0:
+    if isinstance(axis, (list, tuple)) and len(axis) == 1:
         axis == axis[0]
     porder = float(porder)
 
@@ -255,7 +256,7 @@ def vector_norm(x, porder=2, axis=None, keepdim=False, name=None):
 
     if porder == 0:
         out = (x != 0)
-        out = paddle.cast(out, x.dtype, name=name)
+        out = paddle.cast(out, x.dtype)
         out = paddle.sum(x=out, axis=axis, keepdim=keepdim, name=name)
     elif porder == float('inf'):
         out = paddle.abs(x, name=name)
@@ -265,9 +266,9 @@ def vector_norm(x, porder=2, axis=None, keepdim=False, name=None):
         out = paddle.min(x=out, axis=axis, keepdim=keepdim, name=name)
     else:
         out = paddle.abs(x, name)
-        out = paddle.pow(out, porder, name)
+        out = out**porder
         out = paddle.sum(x=out, axis=axis, keepdim=keepdim, name=name)
-        out = paddle.pow(out, 1.0 / porder, name)
+        out = out**(1.0 / porder)
     return out
 
 
