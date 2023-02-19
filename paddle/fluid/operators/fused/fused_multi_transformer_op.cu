@@ -9,8 +9,17 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License. */
 
+#include "paddle/fluid/operators/custom_all_reduce.h"
 #include "paddle/fluid/operators/fused/fused_multi_transformer_op.cu.h"
 #include "paddle/fluid/operators/fused/cutlass/cutlass_kernels/fpA_intB_gemm/fpA_intB_gemm_template.h"
+#include "paddle/fluid/operators/custom_all_reduce.h"
+
+#include "paddle/fluid/platform/device/gpu/gpu_resource_pool.h"
+#include "paddle/phi/kernels/reduce_sum_kernel.h"
+
+PADDLE_DEFINE_EXPORTED_int64(custom_allreduce_one_shot_threshold, 196608, "");
+PADDLE_DEFINE_EXPORTED_int64(custom_allreduce_two_shot_threshold, 50331648, "");
+
 
 namespace fastertransformer {
 template class CutlassFpAIntBGemmRunner<half, uint8_t>;
@@ -18,6 +27,31 @@ template class CutlassFpAIntBGemmRunner<half, uint8_t>;
 
 namespace paddle {
 namespace operators {
+
+static CustomNCCLComm *GetCustomNCCLComm(const phi::GPUContext &ctx,
+                                         int ring_id) {
+  static auto comm =
+      CreateCustomNCCLComm(ctx,
+                           FLAGS_custom_allreduce_one_shot_threshold,
+                           FLAGS_custom_allreduce_two_shot_threshold,
+                           ring_id);
+  return comm.get();
+}
+
+phi::DenseTensor CustomAllReduce(const phi::DenseTensor &t) {
+  auto *ctx = static_cast<phi::GPUContext *>(
+      platform::DeviceContextPool::Instance().Get(t.place()));
+  auto comm = GetCustomNCCLComm(*ctx, 0);
+  PADDLE_ENFORCE_NOT_NULL(comm);
+  phi::DenseTensor ret;
+  ret.Resize(t.dims());
+  ctx->Alloc(&ret, t.dtype());
+  comm->SwapInput(&ret);
+  phi::Copy(*ctx, t, t.place(), false, &ret);
+  return comm->AllReduce();
+}
+
+
 // cublaslt ffn operation have accuracy problem 
 #if CUDA_VERSION >= 11060  // Use cublasLt to fuse FFN operation.
 
@@ -237,6 +271,7 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
     auto out_linear_biases = ctx.MultiInput<phi::DenseTensor>("OutLinearBias");
 
     int ring_id = ctx.Attr<int>("ring_id");
+    auto *custom_comm = GetCustomNCCLComm(dev_ctx, ring_id);
     // (transA, transB, compute_bias) = (false, false, false)
     
     auto out_linear_compute = AttnMatMul<T>(
@@ -596,6 +631,10 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
 #endif
       VLOG(5)<<"Doing out_linear gemm, mnk:"<<token_num<<", "<<dim_embed<<", "<<hidden_size;
       if (pre_layer_norm) {
+        if (custom_comm) {
+          custom_comm->SwapInput(buf1);
+        }
+        
         if(quant_weight){
           mixed_gemm_runner.gemm(
             reinterpret_cast<const half*>(fmha_out_data),
@@ -613,8 +652,15 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
           out_linear_compute.ComputeForward(
               out_linear_weights[i], &fmha_out, nullptr, buf1, nullptr);
         }
-        AllReduce<T>(*buf1, ring_id, buf1->numel(), dev_ctx);
+        if (custom_comm) {
+          *buf1 = custom_comm->AllReduce();
+        } else {
+          AllReduce<T>(*buf1, ring_id, buf1->numel(), dev_ctx);
+        }
       } else {
+        if (custom_comm) {
+          custom_comm->SwapInput(buf0);
+        }
         if(quant_weight){
           mixed_gemm_runner.gemm(
             reinterpret_cast<const half*>(fmha_out_data),
@@ -630,7 +676,11 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
           out_linear_compute.ComputeForward(
               out_linear_weights[i], &fmha_out, nullptr, buf0, nullptr);
         }
-        AllReduce<T>(*buf0, ring_id, buf0->numel(), dev_ctx);
+        if (custom_comm) {
+          *buf0 = custom_comm->AllReduce();
+        } else {
+          AllReduce<T>(*buf0, ring_id, buf0->numel(), dev_ctx);
+        }
       }
 #ifdef _DEBUG_FUSED_MULTI_TRANSFORMER
       VLOG(0) << "step4";
@@ -710,6 +760,9 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
       // step7. ffn2 matmul
       VLOG(5)<<"Doing ffn2 gemm, mnk:"<<token_num<<", "<<dim_embed<<", "<<dim_ffn;
       if (pre_layer_norm) {
+        if (custom_comm) {
+          custom_comm->SwapInput(buf1);
+        }
         if(quant_weight){
           mixed_gemm_runner.gemm(
             reinterpret_cast<const half *>(ffn1_out_data),
@@ -728,6 +781,9 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
               ffn2_weights[i], &ffn1_out, nullptr, buf1, nullptr);
         }
       } else {
+        if (custom_comm) {
+          custom_comm->SwapInput(buf0);
+        }
         if(quant_weight){
           mixed_gemm_runner.gemm(
             reinterpret_cast<const half *>(ffn1_out_data),
@@ -752,9 +808,19 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
 #endif
 
       if (pre_layer_norm) {
-        AllReduce<T>(*buf1, ring_id, buf1->numel(), dev_ctx);
+        VLOG(4) << "MPAllReduce 2: " << buf1->numel();
+        if (custom_comm) {
+          *buf1 = custom_comm->AllReduce();
+        } else {
+          AllReduce<T>(*buf1, ring_id, buf1->numel(), dev_ctx);
+        }
       } else {
-        AllReduce<T>(*buf0, ring_id, buf0->numel(), dev_ctx);
+        VLOG(4) << "MPAllReduce 2: " << buf0->numel();
+        if (custom_comm) {
+          *buf0 = custom_comm->AllReduce();
+        } else {
+          AllReduce<T>(*buf0, ring_id, buf0->numel(), dev_ctx);
+        }
       }
 #ifdef _DEBUG_FUSED_MULTI_TRANSFORMER
       VLOG(0) << "step7.1";
@@ -1051,6 +1117,7 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
     auto out_linear_weights_scales = ctx.MultiInput<phi::DenseTensor>("OutLinearWScale");
     auto out_linear_biases = ctx.MultiInput<phi::DenseTensor>("OutLinearBias");
     int ring_id = ctx.Attr<int>("ring_id");
+    auto *custom_comm = GetCustomNCCLComm(dev_ctx, ring_id);
     // (transA, transB, compute_bias) = (false, false, false)
     auto out_linear_compute = AttnMatMul<T>(
         dev_ctx, false, false, token_num, dim_embed, hidden_size, false);
@@ -1416,6 +1483,9 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
 #endif
       VLOG(5)<<"Doing out_linear gemm, mnk:"<<token_num<<", "<<dim_embed<<", "<<hidden_size;
       if (pre_layer_norm) {        
+        if (custom_comm) {
+          custom_comm->SwapInput(buf1);
+        }
         if(quant_weight){
           mixed_gemm_runner.gemm(
             reinterpret_cast<const half*>(fmha_out_data),
@@ -1433,8 +1503,15 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
             out_linear_compute.ComputeForward(
                 out_linear_weights[i], &fmha_out, nullptr, buf1, nullptr);
         }
-        AllReduce<T>(*buf1, ring_id, buf1->numel(), dev_ctx);
+        if (custom_comm) {
+          *buf1 = custom_comm->AllReduce();
+        } else {
+          AllReduce<T>(*buf1, ring_id, buf1->numel(), dev_ctx);
+        }
       } else {        
+        if (custom_comm) {
+          custom_comm->SwapInput(buf0);
+        }
         if(quant_weight){
           mixed_gemm_runner.gemm(
             reinterpret_cast<const half*>(fmha_out_data),
@@ -1450,7 +1527,11 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
         out_linear_compute.ComputeForward(
             out_linear_weights[i], &fmha_out, nullptr, buf0, nullptr);
         }
-        AllReduce<T>(*buf0, ring_id, buf0->numel(), dev_ctx);
+        if (custom_comm) {
+          *buf0 = custom_comm->AllReduce();
+        } else {
+          AllReduce<T>(*buf0, ring_id, buf0->numel(), dev_ctx);
+        }
       }
       // cudaDeviceSynchronize();
       // PADDLE_THROW(paddle::platform::errors::Fatal(
@@ -1539,7 +1620,10 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
       // step8. ffn2 matmul
       VLOG(5)<<"Doing ffn2 gemm, mnk:"<<token_num<<", "<<dim_embed<<", "<<dim_ffn;
       if (pre_layer_norm) {
-                if(quant_weight){
+        if (custom_comm) {
+          custom_comm->SwapInput(buf1);
+        }
+        if(quant_weight){
           mixed_gemm_runner.gemm(
             reinterpret_cast<const half *>(ffn1_out_data),
             reinterpret_cast<const uint8_t*>(ffn2_weights[i]->data<int8_t>()),
@@ -1557,6 +1641,9 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
             ffn2_weights[i], &ffn1_dropout_out, nullptr, buf1, nullptr);
         }
       } else {
+        if (custom_comm) {
+          custom_comm->SwapInput(buf0);
+        }
         if(quant_weight){
           mixed_gemm_runner.gemm(
             reinterpret_cast<const half *>(ffn1_out_data),
@@ -1580,9 +1667,19 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
 #endif
 
       if (pre_layer_norm) {
-        AllReduce<T>(*buf1, ring_id, buf1->numel(), dev_ctx);
+        VLOG(4) << "MPAllReduce 4: " << buf1->numel();
+        if (custom_comm) {
+          *buf1 = custom_comm->AllReduce();
+        } else {
+          AllReduce<T>(*buf1, ring_id, buf1->numel(), dev_ctx);
+        }
       } else {
-        AllReduce<T>(*buf0, ring_id, buf0->numel(), dev_ctx);
+        VLOG(4) << "MPAllReduce 4: " << buf0->numel();
+        if (custom_comm) {
+          *buf0 = custom_comm->AllReduce();
+        } else {
+          AllReduce<T>(*buf0, ring_id, buf0->numel(), dev_ctx);
+        }
       }
 #ifdef _DEBUG_FUSED_MULTI_TRANSFORMER
       VLOG(0) << "step8.1";
