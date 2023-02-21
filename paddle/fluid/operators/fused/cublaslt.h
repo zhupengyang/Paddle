@@ -97,7 +97,6 @@ class CublasLtAlgoCache {
     PADDLE_CUBLASLT_STATUS_CHECK(cublasLtMatmulAlgoCheck);
     if (status != CUBLAS_STATUS_SUCCESS ||
         heuristic_result.workspaceSize > param.workspace_size) {
-      // VLOG(0) << "param.workspace_size is " << param.workspace_size;
       param.time = std::numeric_limits<float>::max();
       return;
     }
@@ -166,9 +165,6 @@ class CublasLtAlgoCache {
                  "please set FLAGS_cublaslt_exhaustive_search_times > 0";
       return nullptr;
     }
-
-    // VLOG(0) << "m n k" << m << " " << n << " " << k;
-
     int64_t seed = 0;
     std::hash<int64_t> hash_fn;
 
