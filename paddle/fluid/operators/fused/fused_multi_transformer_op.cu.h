@@ -1726,6 +1726,44 @@ void InvokeRebuildPadding(const phi::GPUContext &dev_ctx,
       output_data, input_data, padding_offset, dim_embed);
 }
 
+template <typename T, int VecSize>
+__global__ void InitOutValueKernel(T *output_data,
+                                   const int64_t numel,
+                                   const T init_value) {
+  const int tid = threadIdx.x;
+  const int bid = blockIdx.x;
+  int64_t global_thread_idx = bid * blockDim.x + tid;
+
+  for (int linear_index = global_thread_idx * VecSize,
+               step = gridDim.x * blockDim.x * VecSize;
+       linear_index < numel;
+       linear_index += step) {
+    for (int i = 0; i < VecSize; i ++) {
+      output_data[linear_index + i] = init_value;
+    }
+  }
+}
+
+template <typename T>
+void InitValue(const phi::GPUContext &dev_ctx,
+               T *output_data,
+               const int64_t numel,
+               const T init_value) {
+  constexpr int PackSize = VEC_16B / sizeof(T);
+  PADDLE_ENFORCE_EQ(numel % PackSize,
+                    0,
+                    platform::errors::PreconditionNotMet(
+                        "numel=%d must be divisible by vec_size=%d",
+                        numel,
+                        PackSize));
+  const int pack_num = numel / PackSize;
+  const int blocksize = 128;
+  int grid_size = 1;
+  GetNumBlocks(pack_num, &grid_size);
+  InitOutValueKernel<T, PackSize><<<grid_size, blocksize, 0, dev_ctx.stream()>>>(
+      output_data, numel, init_value);
+}
+
 }  // namespace
 
 }  // namespace operators
