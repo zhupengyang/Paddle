@@ -41,7 +41,6 @@ limitations under the License. */
 #include "paddle/phi/core/ddim.h"
 #include "paddle/phi/core/kernel_context.h"
 #include "paddle/phi/core/kernel_factory.h"
-#include "paddle/phi/nvtx_guard.h"
 #include "paddle/phi/ops/compat/signatures.h"
 
 namespace phi {
@@ -216,7 +215,6 @@ RuntimeContext::RuntimeContext(const VariableNameMap& innames,
 }
 
 void OperatorBase::Run(const Scope& scope, const platform::Place& place) {
-  phi::NVTXGuard nvtx_guard(Type());
   try {
     VLOG(4) << place << " " << DebugStringEx(&scope);
     if (platform::is_gpu_place(place)) {

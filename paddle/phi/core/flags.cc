@@ -829,8 +829,6 @@ PADDLE_DEFINE_EXPORTED_bool(
     false,
     "It controls whether to apply IR pass to program when using Fleet APIs");
 
-PADDLE_DEFINE_EXPORTED_bool(enable_nvtx, false, "");
-
 /**
  * Distributed related FLAG
  * Name: FLAGS_graph_load_in_parallel
