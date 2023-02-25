@@ -1151,3 +1151,13 @@ PADDLE_DEFINE_EXPORTED_bool(enable_cudnn_frontend, false, "");
  */
 PADDLE_DEFINE_EXPORTED_int32(cudnn_cache_saturation_count, 1, "");
 #endif  // PADDLE_WITH_CUDNN_FRONTEND
+
+/**
+ * Use cutlass fmha in FusedMultiTransformer
+ */
+PADDLE_DEFINE_EXPORTED_bool(use_cutlass_fmha, false, "");
+
+/**
+ * Use cublaslt in attn_gemm
+ */
+PADDLE_DEFINE_EXPORTED_bool(use_cublaslt_attn_gemm, false, "");

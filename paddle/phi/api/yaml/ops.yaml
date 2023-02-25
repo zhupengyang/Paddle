@@ -1147,3 +1147,12 @@
   kernel :
     func : top_p_sampling
     data_type : x
+
+- op : cutlass_fused_multihead_attention
+  args : (Tensor query, Tensor key, Tensor value, Tensor mask, float scale, bool causal)
+  output : Tensor
+  infer_meta :
+    func : FusedMultiHeadAttentionInferMeta
+  kernel :
+    func : fused_multihead_attention
+  optional : mask

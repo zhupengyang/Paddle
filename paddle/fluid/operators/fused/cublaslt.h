@@ -97,6 +97,7 @@ class CublasLtAlgoCache {
     PADDLE_CUBLASLT_STATUS_CHECK(cublasLtMatmulAlgoCheck);
     if (status != CUBLAS_STATUS_SUCCESS ||
         heuristic_result.workspaceSize > param.workspace_size) {
+      // VLOG(0) << "param.workspace_size is " << param.workspace_size;
       param.time = std::numeric_limits<float>::max();
       return;
     }
@@ -165,6 +166,9 @@ class CublasLtAlgoCache {
                  "please set FLAGS_cublaslt_exhaustive_search_times > 0";
       return nullptr;
     }
+
+    // VLOG(0) << "m n k" << m << " " << n << " " << k;
+
     int64_t seed = 0;
     std::hash<int64_t> hash_fn;
 
@@ -539,6 +543,16 @@ class CublasLtAlgoCache {
   const int requested_algo_count_ = 100;
   std::mutex cache_mutex_;
 
+  inline int64_t RoundToNextHighPowOfTwo(int64_t n, int64_t min_val) {
+    n--;
+    n |= (n >> 1);
+    n |= (n >> 2);
+    n |= (n >> 4);
+    n |= (n >> 8);
+    n |= (n >> 16);
+    return std::max(min_val, (n + 1));
+  }
+
   void HashMatmulDesc_(cublasLtMatmulDesc_t desc,
                        int64_t* seed,
                        const std::hash<int64_t>& hash_fn) {
@@ -596,17 +610,29 @@ class CublasLtAlgoCache {
         &size_to_write));
     HashValue_(seed, hash_fn, static_cast<int64_t>(batch));
 
+    // PADDLE_ENFORCE_GPU_SUCCESS(dyl::cublasLtMatrixLayoutGetAttribute(
+    //     desc, CUBLASLT_MATRIX_LAYOUT_ROWS, &row, sizeof(row), &size_to_write));
+    // HashValue_(seed, hash_fn, RoundToNextHighPowOfTwo(row, 128));
+
+    // PADDLE_ENFORCE_GPU_SUCCESS(dyl::cublasLtMatrixLayoutGetAttribute(
+    //     desc, CUBLASLT_MATRIX_LAYOUT_COLS, &col, sizeof(col), &size_to_write));
+    // HashValue_(seed, hash_fn, RoundToNextHighPowOfTwo(col, 128));
+
+    // PADDLE_ENFORCE_GPU_SUCCESS(dyl::cublasLtMatrixLayoutGetAttribute(
+    //     desc, CUBLASLT_MATRIX_LAYOUT_LD, &ld, sizeof(ld), &size_to_write));
+    // HashValue_(seed, hash_fn, RoundToNextHighPowOfTwo(ld, 128));
+
     PADDLE_ENFORCE_GPU_SUCCESS(dyl::cublasLtMatrixLayoutGetAttribute(
         desc, CUBLASLT_MATRIX_LAYOUT_ROWS, &row, sizeof(row), &size_to_write));
-    HashValue_(seed, hash_fn, static_cast<int64_t>(row));
+    HashValue_(seed, hash_fn, row);
 
     PADDLE_ENFORCE_GPU_SUCCESS(dyl::cublasLtMatrixLayoutGetAttribute(
         desc, CUBLASLT_MATRIX_LAYOUT_COLS, &col, sizeof(col), &size_to_write));
-    HashValue_(seed, hash_fn, static_cast<int64_t>(col));
+    HashValue_(seed, hash_fn, col);
 
     PADDLE_ENFORCE_GPU_SUCCESS(dyl::cublasLtMatrixLayoutGetAttribute(
         desc, CUBLASLT_MATRIX_LAYOUT_LD, &ld, sizeof(ld), &size_to_write));
-    HashValue_(seed, hash_fn, static_cast<int64_t>(ld));
+    HashValue_(seed, hash_fn, ld);
 
     PADDLE_ENFORCE_GPU_SUCCESS(dyl::cublasLtMatrixLayoutGetAttribute(
         desc,
