@@ -356,6 +356,25 @@ void dispatch_gemm_to_cutlass(const T*          A,
                                  cutlass::gemm::GemmShape<128, 32, 64>>(
                 A, B, weight_scales, biases, C, m, n, k, gemm_config, workspace, workspace_bytes, stream, occupancy);
             break;
+        // config for M_16000_N_12288_K_6144 in encoder
+        case CutlassTileConfig::CtaShape256x128x64_WarpShape64x64x64:
+            dispatch_gemm_config<T,
+                                 WeightType,
+                                 arch,
+                                 EpilogueTag,
+                                 cutlass::gemm::GemmShape<256, 128, 64>,
+                                 cutlass::gemm::GemmShape<64, 64, 64>>(
+                A, B, weight_scales, biases, C, m, n, k, gemm_config, workspace, workspace_bytes, stream, occupancy);
+            break;
+        case CutlassTileConfig::CtaShape128x256x64_WarpShape64x64x64:
+            dispatch_gemm_config<T,
+                                 WeightType,
+                                 arch,
+                                 EpilogueTag,
+                                 cutlass::gemm::GemmShape<128, 256, 64>,
+                                 cutlass::gemm::GemmShape<64, 64, 64>>(
+                A, B, weight_scales, biases, C, m, n, k, gemm_config, workspace, workspace_bytes, stream, occupancy);
+            break;
         case CutlassTileConfig::Undefined:
             throw std::runtime_error("[FT Error][fpA_intB][dispatch_gemm_to_cutlass] gemm config undefined.");
             break;
@@ -433,8 +452,10 @@ void CutlassFpAIntBGemmRunner<T, WeightType>::run_gemm<EpilogueTag>(const T*    
                                                                     const size_t      workspace_bytes,
                                                                     cudaStream_t      stream)
 {
-    VLOG(3)<<__PRETTY_FUNCTION__;    static constexpr bool          is_weight_only    = !std::is_same<T, WeightType>::value;
-    std::vector<CutlassGemmConfig> candidate_configs = get_candidate_configs(sm_, is_weight_only, false);
+    VLOG(3)<<__PRETTY_FUNCTION__;    
+    static constexpr bool          is_weight_only    = !std::is_same<T, WeightType>::value;
+    const bool is_weight_only_encoder = m>=512 ? true:false;
+    std::vector<CutlassGemmConfig> candidate_configs = get_candidate_configs(sm_, is_weight_only, is_weight_only_encoder, false);
     std::vector<int>               occupancies(candidate_configs.size());
 
     for (size_t ii = 0; ii < candidate_configs.size(); ++ii) {
