@@ -24,7 +24,7 @@ DECLARE_bool(use_cublaslt_attn_gemm);
 namespace paddle {
 namespace operators {
  
-#if CUDA_VERSION >= 11060
+#if CUDA_VERSION >= 11020
 // Only Used in Inference
 template <typename T>
 class CublasFusedMLP {
@@ -238,11 +238,16 @@ class CublasFusedMLP {
         return CUBLASLT_EPILOGUE_RELU;
       }
     } else if (activation == "gelu") {
-      if (add_bias) {
-        return CUBLASLT_EPILOGUE_GELU_BIAS;
-      } else {
-        return CUBLASLT_EPILOGUE_GELU;
-      }
+      #if CUDA_VERSION >= 11060
+        if (add_bias) {
+          return CUBLASLT_EPILOGUE_GELU_BIAS;
+        } else {
+          return CUBLASLT_EPILOGUE_GELU;
+        }
+      #else 
+      PADDLE_THROW(platform::errors::InvalidArgument(
+            "Gelu Epilogue only support in CUDA version >= 11060"));
+      #endif 
     } else if (activation == "none") {
       if (add_bias) {
         return CUBLASLT_EPILOGUE_BIAS;
@@ -325,7 +330,7 @@ class CublasFusedMLP {
   cublasComputeType_t compute_type_ = CUBLAS_COMPUTE_32F;
 };
 
-#endif  // CUDA_VERSION >= 11060
+#endif  // CUDA_VERSION >= 11020
 
 // support gemm-nt and gemm-nn, which is used in fused_attention_op.
 template <typename T>

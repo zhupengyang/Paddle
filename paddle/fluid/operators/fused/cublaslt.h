@@ -160,11 +160,9 @@ class CublasLtAlgoCache {
                                            void* workspace,
                                            size_t workspace_size,
                                            cudaStream_t stream) {
-    if (search_times_ <= 0) {
-      VLOG(3) << "Skip CublasLtAlgoSelect process, use default algo instead. "
-                 "If you want to enable CublasLtAlgoSelect, "
-                 "please set FLAGS_cublaslt_exhaustive_search_times > 0";
-      return nullptr;
+    // If we don't have config file and we donot search, here return nullptr
+    if(!has_config_file_ && search_times_ <= 0){
+      return nullptr; 
     }
 
     // VLOG(0) << "m n k" << m << " " << n << " " << k;
@@ -184,6 +182,11 @@ class CublasLtAlgoCache {
       if (it != map_.end()) {
         VLOG(3) << "CublasLtAlgoSelect Found in cache";
         return &(it->second);
+      } else {
+        // if we have cache but not found algo, and we don't want to search, here return nullptr
+        if (search_times_ <= 0){
+          return nullptr; 
+        }
       }
     }
     VLOG(3) << "CublasLtAlgoSelect Not Found in cache";
@@ -483,32 +486,35 @@ class CublasLtAlgoCache {
   }
 
   ~CublasLtAlgoCache() {
-    int dev;
-    cudaGetDevice(&dev);
+    // Serialize map_ to cache file
+    if(search_times_ > 0){
+      int dev;
+      cudaGetDevice(&dev);
+      if(dev == 0){
+        std::ofstream outfile;
+        outfile.open(config_filename_, std::ios::out | std::ios::trunc);
+        outfile << dyl::cublasLtGetCudartVersion() << std::endl;
 
-    if(dev == 0){
-      // Serialize map_ to cache file
-      std::ofstream outfile;
-      outfile.open(config_filename_, std::ios::out | std::ios::trunc);
-      outfile << dyl::cublasLtGetCudartVersion() << std::endl;
-
-      for (const auto p : map_) {
-        outfile << p.first << " ";
-        for (int i = 0; i < 8; ++i) {
-          outfile << p.second.data[i] << " ";
+        for (const auto p : map_) {
+          outfile << p.first << " ";
+          for (int i = 0; i < 8; ++i) {
+            outfile << p.second.data[i] << " ";
+          }
+          outfile << std::endl;
         }
-        outfile << std::endl;
+        outfile.close();
       }
-      outfile.close();
     }
   }
 
  private:
-  explicit CublasLtAlgoCache(int search_times) : search_times_(search_times) {
+  explicit CublasLtAlgoCache(int search_times) : search_times_(search_times), has_config_file_(true) {
     // Init map_ from cache file
     std::ifstream infile;
     infile.open(config_filename_);
     if (!infile.is_open()) {
+      printf("No config files \n"); 
+      has_config_file_ = false;
       VLOG(3) << "No CublasLtAlgoCache file found";
       return;
     }
@@ -542,6 +548,7 @@ class CublasLtAlgoCache {
   int search_times_;
   const int requested_algo_count_ = 100;
   std::mutex cache_mutex_;
+  bool has_config_file_; 
 
   inline int64_t RoundToNextHighPowOfTwo(int64_t n, int64_t min_val) {
     n--;
@@ -610,29 +617,29 @@ class CublasLtAlgoCache {
         &size_to_write));
     HashValue_(seed, hash_fn, static_cast<int64_t>(batch));
 
-    // PADDLE_ENFORCE_GPU_SUCCESS(dyl::cublasLtMatrixLayoutGetAttribute(
-    //     desc, CUBLASLT_MATRIX_LAYOUT_ROWS, &row, sizeof(row), &size_to_write));
-    // HashValue_(seed, hash_fn, RoundToNextHighPowOfTwo(row, 128));
-
-    // PADDLE_ENFORCE_GPU_SUCCESS(dyl::cublasLtMatrixLayoutGetAttribute(
-    //     desc, CUBLASLT_MATRIX_LAYOUT_COLS, &col, sizeof(col), &size_to_write));
-    // HashValue_(seed, hash_fn, RoundToNextHighPowOfTwo(col, 128));
-
-    // PADDLE_ENFORCE_GPU_SUCCESS(dyl::cublasLtMatrixLayoutGetAttribute(
-    //     desc, CUBLASLT_MATRIX_LAYOUT_LD, &ld, sizeof(ld), &size_to_write));
-    // HashValue_(seed, hash_fn, RoundToNextHighPowOfTwo(ld, 128));
-
     PADDLE_ENFORCE_GPU_SUCCESS(dyl::cublasLtMatrixLayoutGetAttribute(
         desc, CUBLASLT_MATRIX_LAYOUT_ROWS, &row, sizeof(row), &size_to_write));
-    HashValue_(seed, hash_fn, row);
+    HashValue_(seed, hash_fn, RoundToNextHighPowOfTwo(row, 32));
 
     PADDLE_ENFORCE_GPU_SUCCESS(dyl::cublasLtMatrixLayoutGetAttribute(
         desc, CUBLASLT_MATRIX_LAYOUT_COLS, &col, sizeof(col), &size_to_write));
-    HashValue_(seed, hash_fn, col);
+    HashValue_(seed, hash_fn, RoundToNextHighPowOfTwo(col, 32));
 
     PADDLE_ENFORCE_GPU_SUCCESS(dyl::cublasLtMatrixLayoutGetAttribute(
         desc, CUBLASLT_MATRIX_LAYOUT_LD, &ld, sizeof(ld), &size_to_write));
-    HashValue_(seed, hash_fn, ld);
+    HashValue_(seed, hash_fn, RoundToNextHighPowOfTwo(ld, 32));
+
+    // PADDLE_ENFORCE_GPU_SUCCESS(dyl::cublasLtMatrixLayoutGetAttribute(
+    //     desc, CUBLASLT_MATRIX_LAYOUT_ROWS, &row, sizeof(row), &size_to_write));
+    // HashValue_(seed, hash_fn, row);
+
+    // PADDLE_ENFORCE_GPU_SUCCESS(dyl::cublasLtMatrixLayoutGetAttribute(
+    //     desc, CUBLASLT_MATRIX_LAYOUT_COLS, &col, sizeof(col), &size_to_write));
+    // HashValue_(seed, hash_fn, col);
+
+    // PADDLE_ENFORCE_GPU_SUCCESS(dyl::cublasLtMatrixLayoutGetAttribute(
+    //     desc, CUBLASLT_MATRIX_LAYOUT_LD, &ld, sizeof(ld), &size_to_write));
+    // HashValue_(seed, hash_fn, ld);
 
     PADDLE_ENFORCE_GPU_SUCCESS(dyl::cublasLtMatrixLayoutGetAttribute(
         desc,
