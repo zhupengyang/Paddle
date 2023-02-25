@@ -12,13 +12,14 @@ limitations under the License. */
 #include "paddle/fluid/operators/fused/fused_multi_transformer_op.cu.h"
 #include "paddle/fluid/operators/fused/cutlass/cutlass_kernels/fpA_intB_gemm/fpA_intB_gemm_template.h"
 
+DECLARE_bool(use_cutlass_fmha); 
+
 namespace fastertransformer {
 template class CutlassFpAIntBGemmRunner<half, uint8_t>;
 }  // namespace fastertransformer
 
 namespace paddle {
 namespace operators {
-// cublaslt ffn operation have accuracy problem 
 #if CUDA_VERSION >= 11060  // Use cublasLt to fuse FFN operation.
 
 template <typename T>
@@ -486,10 +487,10 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
                     seq_len,
                     dim_head);
         }
-
         phi::DenseTensor *tmp_padding_offset_tensor =
             encoder_remove_padding ? &padding_offset_tensor : nullptr;
-        fmha_compute.ComputeForwardWithoutTranspose(pre_cache_kv_tensor,
+        if(FLAGS_use_cutlass_fmha){
+          fmha_compute.ComputeForwardWithCutlassFMHA(pre_cache_kv_tensor,
                                                     src_mask,
                                                     tmp_padding_offset_tensor,
                                                     &q_transpose_out,
@@ -503,6 +504,23 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
                                                     &qktv_out,
                                                     &fmha_out,
                                                     token_num);
+        } else {
+          fmha_compute.ComputeForwardWithoutTranspose(pre_cache_kv_tensor,
+                                                    src_mask,
+                                                    tmp_padding_offset_tensor,
+                                                    &q_transpose_out,
+                                                    &kv_transpose_out,
+                                                    pre_cache_kv_out_tmp,
+                                                    &qk_out,
+                                                    src_mask_tmp,
+                                                    &softmax_out,
+                                                    &attn_dropout_mask_out,
+                                                    &attn_dropout_out,
+                                                    &qktv_out,
+                                                    &fmha_out,
+                                                    token_num);
+        }
+        
         const T *k_ptr = nullptr;
         const T *v_ptr = nullptr;
 
@@ -576,7 +594,8 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
 
         phi::DenseTensor *tmp_padding_offset_tensor =
             encoder_remove_padding ? &padding_offset_tensor : nullptr;
-        fmha_compute.ComputeForwardWithoutTranspose(cache_kv,
+        if(FLAGS_use_cutlass_fmha){
+          fmha_compute.ComputeForwardWithCutlassFMHA(cache_kv,
                                                     src_mask,
                                                     tmp_padding_offset_tensor,
                                                     &q_transpose_out,
@@ -590,6 +609,23 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
                                                     &qktv_out,
                                                     &fmha_out,
                                                     token_num);
+        } else {
+          fmha_compute.ComputeForwardWithoutTranspose(cache_kv,
+                                                    src_mask,
+                                                    tmp_padding_offset_tensor,
+                                                    &q_transpose_out,
+                                                    &kv_transpose_out,
+                                                    cache_kv_out,
+                                                    &qk_out,
+                                                    nullptr,
+                                                    &softmax_out,
+                                                    &attn_dropout_mask_out,
+                                                    &attn_dropout_out,
+                                                    &qktv_out,
+                                                    &fmha_out,
+                                                    token_num);
+        }
+        
       }
 #ifdef _DEBUG_FUSED_MULTI_TRANSFORMER
       VLOG(0) << "step3";
@@ -1310,7 +1346,8 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
 
         phi::DenseTensor *tmp_padding_offset_tensor =
             encoder_remove_padding ? &padding_offset_tensor : nullptr;
-        fmha_compute.ComputeForwardWithoutTranspose(pre_cache_kv_tensor,
+        if(FLAGS_use_cutlass_fmha){
+          fmha_compute.ComputeForwardWithCutlassFMHA(pre_cache_kv_tensor,
                                                     src_mask,
                                                     tmp_padding_offset_tensor,
                                                     &q_transpose_out,
@@ -1324,6 +1361,23 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
                                                     &qktv_out,
                                                     &fmha_out,
                                                     token_num);
+        } else {
+          fmha_compute.ComputeForwardWithoutTranspose(pre_cache_kv_tensor,
+                                                    src_mask,
+                                                    tmp_padding_offset_tensor,
+                                                    &q_transpose_out,
+                                                    &kv_transpose_out,
+                                                    pre_cache_kv_out_tmp,
+                                                    &qk_out,
+                                                    src_mask_tmp,
+                                                    &softmax_out,
+                                                    &attn_dropout_mask_out,
+                                                    &attn_dropout_out,
+                                                    &qktv_out,
+                                                    &fmha_out,
+                                                    token_num);
+        }
+        
         const T *k_ptr = nullptr;
         const T *v_ptr = nullptr;
 
@@ -1396,7 +1450,8 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
         }
         phi::DenseTensor *tmp_padding_offset_tensor =
             encoder_remove_padding ? &padding_offset_tensor : nullptr;
-        fmha_compute.ComputeForwardWithoutTranspose(cache_kv,
+        if(FLAGS_use_cutlass_fmha){
+          fmha_compute.ComputeForwardWithCutlassFMHA(cache_kv,
                                                     src_mask,
                                                     tmp_padding_offset_tensor,
                                                     &q_transpose_out,
@@ -1410,6 +1465,23 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
                                                     &qktv_out,
                                                     &fmha_out,
                                                     token_num);
+        } else {
+          fmha_compute.ComputeForwardWithoutTranspose(cache_kv,
+                                                    src_mask,
+                                                    tmp_padding_offset_tensor,
+                                                    &q_transpose_out,
+                                                    &kv_transpose_out,
+                                                    cache_kv_out,
+                                                    &qk_out,
+                                                    nullptr,
+                                                    &softmax_out,
+                                                    &attn_dropout_mask_out,
+                                                    &attn_dropout_out,
+                                                    &qktv_out,
+                                                    &fmha_out,
+                                                    token_num);
+        }
+        
       }
 #ifdef _DEBUG_FUSED_MULTI_TRANSFORMER
       VLOG(0) << "step3";

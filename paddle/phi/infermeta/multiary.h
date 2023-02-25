@@ -541,4 +541,12 @@ void MoeInferMeta(const MetaTensor& x,
                   const std::string& act_type,
                   MetaTensor* out);
 
+void FusedMultiHeadAttentionInferMeta(const MetaTensor& query,
+                                      const MetaTensor& key,
+                                      const MetaTensor& value,
+                                      const MetaTensor& mask,
+                                      float scale,
+                                      bool causal,
+                                      MetaTensor* out);
+
 }  // namespace phi

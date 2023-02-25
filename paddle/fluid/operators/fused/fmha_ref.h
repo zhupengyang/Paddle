@@ -25,7 +25,7 @@ limitations under the License. */
 #include "paddle/phi/kernels/funcs/transpose_function.cu.h"
 #include "paddle/phi/kernels/gpudnn/softmax_gpudnn.h"
 #include "paddle/phi/kernels/fusion/fused_softmax_mask_kernel.h"
-// #include "paddle/phi/kernels/fusion/gpu/fused_softmax_mask_kernel.cu"
+#include "paddle/phi/kernels/fusion/fused_multihead_attention_kernel.h"
 
 namespace paddle {
 namespace operators {
@@ -346,6 +346,135 @@ class FMHARef {
     std::vector<int> perm_3 = {0, 2, 1, 3};
     phi::funcs::TransposeGPUKernelDriver<T>(
         dev_ctx_, *qktv_out_tensor, perm_3, fmha_out_tensor);
+  }
+
+  void ComputeForwardWithCutlassFMHA(
+      const phi::DenseTensor* cache_kv_tensor,
+      const phi::DenseTensor* src_mask_tensor,
+      const phi::DenseTensor* padding_offset_tensor,
+      phi::DenseTensor* q_transpose_out_tensor,
+      phi::DenseTensor* kv_transpose_out_tensor,
+      phi::DenseTensor* cache_kv_out_tensor,
+      phi::DenseTensor* qk_out_tensor,
+      phi::DenseTensor* src_mask_out_tensor,
+      phi::DenseTensor* softmax_out_tensor,
+      phi::DenseTensor* dropout_mask_out_tensor,
+      phi::DenseTensor* dropout_out_tensor,
+      phi::DenseTensor* qktv_out_tensor,
+      phi::DenseTensor* fmha_out_tensor,
+      const int token_num) {
+    // input shape: [bs, seq_len, 3, num_head, head_dim]
+    // transpose with perm [2, 0, 3, 1, 4],
+    // output_shape: [3, bs, num_head, seq_len, head_dim]
+    T* qk_out_data = qk_out_tensor->data<T>();
+    T* qktv_out_data = qktv_out_tensor->data<T>();
+    T* softmax_out_data = softmax_out_tensor->data<T>();
+    T* dropout_out_data = dropout_out_tensor->data<T>();
+    T* fmha_out_data = fmha_out_tensor->data<T>();
+
+    auto out_seq_len = seq_len_;
+    if (cache_kv_tensor) {
+      // kv [2, bs, num_head, seq_len, head_dim]
+      phi::funcs::ConcatFunctor<phi::GPUContext, T> concat;
+      // out [2, bs, num_head, cache_seq_len + seq_len, head_dim]
+      concat(dev_ctx_,
+             {*cache_kv_tensor, *kv_transpose_out_tensor},
+             3,
+             cache_kv_out_tensor);
+      out_seq_len = cache_kv_out_tensor->dims()[3];
+    }
+
+    int64_t q_size = batch_size_ * seq_len_ * num_head_ * head_dim_;
+    T* q_ptr = q_transpose_out_tensor->data<T>();
+    T* k_ptr = nullptr;
+    T* v_ptr = nullptr;
+
+    if (cache_kv_tensor) {
+      int64_t k_size = cache_kv_out_tensor->numel() / 2;
+      k_ptr = cache_kv_out_tensor->data<T>();
+      v_ptr = k_ptr + k_size;
+    } else {
+      int64_t k_size = q_size;
+      k_ptr = kv_transpose_out_tensor->data<T>();
+      v_ptr = k_ptr + k_size;
+    }
+
+    float scale = 1.0f / sqrt(float(head_dim_)); 
+    if (src_mask_tensor != nullptr) {
+      if (src_mask_out_tensor == nullptr && seq_len_ == out_seq_len) {
+        phi::fusion::cutlass_internal::MultiHeadAttentionForwardWrapper<T, phi::GPUContext>(
+          dev_ctx_, 
+          q_ptr, 
+          k_ptr, 
+          v_ptr, 
+          src_mask_tensor->data<T>(), 
+          scale, 
+          false, /*causal*/
+          batch_size_, 
+          num_head_, 
+          seq_len_, 
+          out_seq_len,  
+          head_dim_, 
+          src_mask_tensor->dims()[3] * src_mask_tensor->dims()[2], 
+          0, 
+          src_mask_tensor->dims()[3],
+          qktv_out_data); 
+      } else {
+        phi::fusion::cutlass_internal::MultiHeadAttentionForwardWrapper<T, phi::GPUContext>(
+          dev_ctx_, 
+          q_ptr, 
+          k_ptr, 
+          v_ptr, 
+          src_mask_tensor->data<T>(), 
+          scale, 
+          false, /*causal*/
+          batch_size_, 
+          num_head_, 
+          seq_len_, 
+          out_seq_len,  
+          head_dim_, 
+          src_mask_tensor->dims()[3] * src_mask_tensor->dims()[2], 
+          0, 
+          src_mask_tensor->dims()[3], 
+          qktv_out_data); 
+      }
+    } else {
+      phi::fusion::cutlass_internal::MultiHeadAttentionForwardWrapper<T, phi::GPUContext>(
+        dev_ctx_, 
+        q_ptr, 
+        k_ptr, 
+        v_ptr, 
+        nullptr, 
+        scale, 
+        false, /*causal*/
+        batch_size_, 
+        num_head_, 
+        seq_len_, 
+        out_seq_len,  
+        head_dim_, 
+        0, 
+        0, 
+        0, 
+        qktv_out_data); 
+    }
+
+    // transpose: [0, 2, 1, 3]
+    // output shape: [batch_size, seq_len, num_heads, head_dim]
+    if (!padding_offset_tensor) {
+      std::vector<int> perm_3 = {0, 2, 1, 3};
+      phi::funcs::TransposeGPUKernelDriver<T>(
+          dev_ctx_, *qktv_out_tensor, perm_3, fmha_out_tensor);
+    } else {
+      InvokeTransposeRemovePadding<T>(dev_ctx_,
+                                      qktv_out_data,
+                                      fmha_out_data,
+                                      batch_size_,
+                                      num_head_,
+                                      seq_len_,
+                                      head_dim_,
+                                      token_num,
+                                      padding_offset_tensor->data<int>());
+    }
   }
 
   void ComputeForwardWithoutTranspose(

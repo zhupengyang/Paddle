@@ -19,9 +19,11 @@ limitations under the License. */
 #include "paddle/phi/kernels/funcs/elementwise_functor.h"
 #include "paddle/fluid/operators/fused/cublaslt.h"
 
+DECLARE_bool(use_cublaslt_attn_gemm);
+
 namespace paddle {
 namespace operators {
-
+ 
 #if CUDA_VERSION >= 11060
 // Only Used in Inference
 template <typename T>
@@ -352,34 +354,7 @@ class AttnMatMul {
                       const phi::DenseTensor* bias,
                       phi::DenseTensor* output,
                       phi::DenseTensor* bias_out) {
-#if CUDA_VERSION < 11060
-    // Note: for blas.GEMM API in Paddle, it treats all inputs as row-major.
-    // here: (transa, transb): nt, input * weight.
-    CBLAS_TRANSPOSE transA = transA_ ? CblasTrans : CblasNoTrans;
-    CBLAS_TRANSPOSE transB = transB_ ? CblasTrans : CblasNoTrans;
-    T alpha = static_cast<T>(1.0);
-    T beta = static_cast<T>(0.0);
-
-    // (m, n, k) = bsz_seq, output_size, input_size, (input, weight, out)
-    auto blas = phi::funcs::GetBlas<phi::GPUContext, T>(dev_ctx_);
-    blas.GEMM(transA,
-              transB,
-              bsz_seq_,
-              output_size_,
-              input_size_,
-              alpha,
-              input->data<T>(),
-              weight->data<T>(),
-              beta,
-              output->data<T>());
-    if (compute_bias_) {
-      // bias_out = output + bias
-      std::vector<const phi::DenseTensor*> ins = {output, bias};
-      std::vector<phi::DenseTensor*> outs = {bias_out};
-      phi::funcs::BroadcastKernel<phi::ElementwiseType::kBinary, T, T>(
-          dev_ctx_, ins, &outs, -1, phi::funcs::AddFunctor<T>());
-    }
-#else 
+  if(FLAGS_use_cublaslt_attn_gemm){
     auto cublas_lt_gemm = CublasFusedMLP<T>(dev_ctx_); 
     phi::DDim input_shape({bsz_seq_, input_size_});
     phi::DDim weight_shape({input_size_, output_size_});
@@ -398,7 +373,34 @@ class AttnMatMul {
     } else {
       cublas_lt_gemm.ComputeForward(input, weight, nullptr, nullptr, output, "none"); 
     }
-#endif // __CUDA_VERSION__ < 11060
+  } else {
+      // Note: for blas.GEMM API in Paddle, it treats all inputs as row-major.
+    // here: (transa, transb): nt, input * weight.
+    CBLAS_TRANSPOSE transA = transA_ ? CblasTrans : CblasNoTrans;
+    CBLAS_TRANSPOSE transB = transB_ ? CblasTrans : CblasNoTrans;
+    T alpha = static_cast<T>(1.0);
+    T beta = static_cast<T>(0.0);
+
+    // (m, n, k) = bsz_seq, output_size, input_size, (input, weight, out)
+    auto blas = phi::funcs::GetBlas<phi::GPUContext, T>(dev_ctx_);
+    blas.GEMM(transA,
+              transB,
+              bsz_seq_,
+              output_size_,
+              input_size_,
+              alpha,
+              input->data<T>(),
+              weight->data<T>(),
+              beta,
+              output->data<T>());
+      if (compute_bias_) {
+        // bias_out = output + bias
+        std::vector<const phi::DenseTensor*> ins = {output, bias};
+        std::vector<phi::DenseTensor*> outs = {bias_out};
+        phi::funcs::BroadcastKernel<phi::ElementwiseType::kBinary, T, T>(
+            dev_ctx_, ins, &outs, -1, phi::funcs::AddFunctor<T>());
+      }
+    }
   }
 
   void ComputeBackward(const phi::DenseTensor* input,
