@@ -160,6 +160,7 @@ class CublasLtAlgoCache {
                                            void* workspace,
                                            size_t workspace_size,
                                            cudaStream_t stream) {
+    // If we don't have config file and we donot search, here return nullptr
     if(!has_config_file_ && search_times_ <= 0){
       return nullptr; 
     }
@@ -182,7 +183,8 @@ class CublasLtAlgoCache {
         VLOG(3) << "CublasLtAlgoSelect Found in cache";
         return &(it->second);
       } else {
-        if(search_times_ <= 0) {
+        // if we have cache but not found algo, and we don't want to search, here return nullptr
+        if (search_times_ <= 0){
           return nullptr; 
         }
       }
