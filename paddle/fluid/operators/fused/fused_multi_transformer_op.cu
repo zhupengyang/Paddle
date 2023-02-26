@@ -30,9 +30,6 @@ template class CutlassFpAIntBGemmRunner<half, uint8_t>;
 
 namespace paddle {
 namespace operators {
-<<<<<<< Updated upstream
-=======
-
 
 static CustomNCCLComm *GetCustomNCCLComm(const phi::GPUContext &ctx,
                                          int ring_id) {
@@ -58,7 +55,6 @@ phi::DenseTensor CustomAllReduce(const phi::DenseTensor &t) {
 }
 
 // cublaslt ffn operation have accuracy problem 
->>>>>>> Stashed changes
 #if CUDA_VERSION >= 11060  // Use cublasLt to fuse FFN operation.
 
 template <typename T>
