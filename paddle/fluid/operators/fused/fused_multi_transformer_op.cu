@@ -18,11 +18,10 @@ limitations under the License. */
 #include "paddle/phi/kernels/reduce_sum_kernel.h"
 #include<algorithm>
 
-PADDLE_DEFINE_EXPORTED_int64(custom_allreduce_one_shot_threshold, 196608, "");
-PADDLE_DEFINE_EXPORTED_int64(custom_allreduce_two_shot_threshold, 50331648, "");
-
 
 DECLARE_bool(use_cutlass_fmha); 
+DECLARE_int64(custom_allreduce_one_shot_threshold);
+DECLARE_int64(custom_allreduce_two_shot_threshold);
 
 namespace fastertransformer {
 template class CutlassFpAIntBGemmRunner<half, uint8_t>;
@@ -41,7 +40,7 @@ static CustomNCCLComm *GetCustomNCCLComm(const phi::GPUContext &ctx,
   return comm.get();
 }
 
-phi::DenseTensor CustomAllReduce(const phi::DenseTensor &t) {
+static phi::DenseTensor CustomAllReduce(const phi::DenseTensor &t) {
   auto *ctx = static_cast<phi::GPUContext *>(
       platform::DeviceContextPool::Instance().Get(t.place()));
   auto comm = GetCustomNCCLComm(*ctx, 0);
@@ -1308,7 +1307,7 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
             (encoder_remove_padding) ? &x_remove_padding : input_x;
         VLOG(5)<<"Doing !pre_layer_norm&&i==0, qkv gemm, mnk:"<<token_num<<", "<<output_size<<", "<<input_size;
         if(quant_weight){
-          VLOG(5)<<"Doing quant weight qkv gemm";
+          VLOG(2)<<"Doing quant weight qkv gemm mix";
           mixed_gemm_runner.gemm(
             reinterpret_cast<const half *>(tmp_input_x->data<T>()),
             reinterpret_cast<const uint8_t*>(qkv_weights[i]->data<int8_t>()),
@@ -1322,13 +1321,14 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
             dev_ctx.stream()
           );
         } else {
+          VLOG(2)<<"Doing quant weight qkv gemm";
         qkv_compute.ComputeForward(
             qkv_weights[i], tmp_input_x, bias, &qkv_out, &qkv_out);
         }
       } else {
         VLOG(5)<<"Doing qkv gemm, mnk:"<<token_num<<", "<<output_size<<", "<<input_size;
         if(quant_weight){
-          VLOG(5)<<"Doing quant weight qkv gemm";
+        VLOG(2)<<"Doing quant weight qkv gemm";
           mixed_gemm_runner.gemm(
             reinterpret_cast<const half*>(buf1->data<T>()),
             reinterpret_cast<const uint8_t*>(qkv_weights[i]->data<int8_t>()),
@@ -1342,7 +1342,7 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
             dev_ctx.stream()
           );
         } else {
-            VLOG(5)<<"Doing qkv_compute.ComputeForward";
+            VLOG(2)<<"Doing qkv_compute.ComputeForward";
             qkv_compute.ComputeForward(
                 qkv_weights[i], buf1, bias, &qkv_out, &qkv_out);
         }

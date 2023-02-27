@@ -204,9 +204,9 @@ PYBIND11_MAKE_OPAQUE(paddle::framework::FetchList);
 PYBIND11_MAKE_OPAQUE(paddle::framework::FetchType);
 
 namespace paddle {
-namespace operators {
-extern phi::DenseTensor CustomAllReduce(const phi::DenseTensor &t);
-}  // namespace operators
+// namespace operators {
+// extern phi::DenseTensor CustomAllReduce(const phi::DenseTensor &t);
+// }  // namespace operators
 
 namespace pybind {
 
@@ -649,7 +649,7 @@ PYBIND11_MODULE(libpaddle, m) {
         return oss.str();
       });
 
-  m.def("custom_all_reduce", &operators::CustomAllReduce);
+  // m.def("custom_all_reduce", &operators::CustomAllReduce);
 
   m.def("set_num_threads", &platform::SetNumThreads);
 

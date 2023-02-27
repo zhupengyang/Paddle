@@ -16,6 +16,7 @@
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wstrict-aliasing"
+#pragma once
 
 #include "cutlass/gemm/device/gemm_universal_base.h"
 #include "cutlass/gemm/kernel/default_gemm.h"
