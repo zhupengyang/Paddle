@@ -31,7 +31,7 @@ constexpr int32_t WARP_SIZE = 32;
 constexpr int32_t HALF_WARP = 16; 
 constexpr float QUANT_MAX_BOUND = 127.0;
 constexpr float QUANT_MIN_BOUND = -127.0;
-constexpr int KFP=128;
+// constexpr int KFP=128;
 
 template<typename T>
 struct MaxFunc{
@@ -127,9 +127,8 @@ __inline__ __device__ T BlockReduceAbsMax(T val, unsigned mask) {
 
 template<typename T, int VecSize>
 __global__ void ReduceAbsMaxKernel(const T* x, const float threshold, const int32_t rows, const int32_t cols, 
-                                   T* row_ranges, int32_t* outlier_idx, int8_t* quant_x){
+                                   T* row_ranges, int32_t* outlier_idx){
   using InVec = phi::AlignedVector<T, VecSize>;
-  using OutVec = phi::AlignedVector<int8_t, VecSize>;
 
   InVec in_vec;
   InVec abs_max_vec;
@@ -137,7 +136,6 @@ __global__ void ReduceAbsMaxKernel(const T* x, const float threshold, const int3
   for (int i = 0; i < VecSize; ++i) {
     abs_max_vec[i] = 0.0;
   }
-  OutVec out_vec;
 
 
   T local_max_val = static_cast<T>(0.0); 
@@ -160,32 +158,58 @@ __global__ void ReduceAbsMaxKernel(const T* x, const float threshold, const int3
           }
       }
       local_max_val = LocalReduceMax<T, InVec, VecSize>(abs_max_vec); 
-      __shared__ float inverse_row_max_val[1]; 
+      // __shared__ float inverse_row_max_val[1]; 
       T tmp_max_val = BlockReduceAbsMax<T>(local_max_val, 0xffffffff); 
       if(threadIdx.x == 0){
         row_ranges[row_idx] = tmp_max_val; 
-        inverse_row_max_val[0] = (1.0f / static_cast<float>(tmp_max_val));
+        // inverse_row_max_val[0] = (1.0f / static_cast<float>(tmp_max_val));
       }
-      __syncthreads();
+      // __syncthreads();
 
-      for(int col_idx = threadIdx.x * VecSize; col_idx < cols; col_idx += blockDim.x * VecSize){
-          int32_t linear_index = row_idx * cols + col_idx; 
-          phi::Load<T, VecSize>(x + linear_index, &in_vec);
+      // for(int col_idx = threadIdx.x * VecSize; col_idx < cols; col_idx += blockDim.x * VecSize){
+      //     int32_t linear_index = row_idx * cols + col_idx; 
+      //     phi::Load<T, VecSize>(x + linear_index, &in_vec);
 
-        #pragma unroll
-          for (int i = 0; i < VecSize; ++i) {
-            if (in_vec[i] < static_cast<T>(threshold)) {
-              out_vec[i] = QuantFunc<T>()(in_vec[i], inverse_row_max_val[0]);
-            } else {
-              out_vec[i] = 0;
-            }
+      //   #pragma unroll
+      //     for (int i = 0; i < VecSize; ++i) {
+      //       if (in_vec[i] < static_cast<T>(threshold)) {
+      //         out_vec[i] = QuantFunc<T>()(in_vec[i], inverse_row_max_val[0]);
+      //       } else {
+      //         out_vec[i] = 0;
+      //       }
             
+      //     }
+      //     phi::Store(out_vec, quant_x + linear_index);
+      // }
+  }
+}
+
+template<typename T, int VecSize>
+__global__ void QuantActKernel(const T* x, const int32_t rows, const int32_t cols, 
+                                   const T* row_ranges, const int32_t* outlier_idx, int8_t* quant_x) {
+  
+  using InVec = phi::AlignedVector<T, VecSize>;
+  using OutVec = phi::AlignedVector<int8_t, VecSize>;
+
+  InVec in_vec;
+  OutVec out_vec;
+  for(int row_idx = blockIdx.x; row_idx < rows; row_idx += gridDim.x){
+      for(int col_idx = threadIdx.x * VecSize; col_idx < cols; col_idx += blockDim.x * VecSize){
+        int32_t linear_index = row_idx * cols + col_idx; 
+        phi::Load<T, VecSize>(x + linear_index, &in_vec);
+        #pragma unroll
+        float scale = 1.0f / static_cast<float>(row_ranges[row_idx]);
+        int32_t local_outlier_idx = outlier_idx[col_idx / 32];
+        for (int i = 0; i < VecSize; ++i) {
+          int32_t index = linear_index + i;
+          if (local_outlier_idx & (1 << (index % 32))) {
+            out_vec[i] = 0;
+          } else {
+            out_vec[i] = QuantFunc<T>()(in_vec[i], scale);
           }
-          phi::Store(out_vec, quant_x + linear_index);
+        }
+        phi::Store(out_vec, quant_x + linear_index);
       }
-
-
-
   }
 }
 
@@ -208,27 +232,27 @@ __global__ void Fill(T* input, T value, int64_t num) {
 
 template<typename T>
 __global__ void SplitKernel(const T* x, const int8_t* weight, const T* weight_scale, const int32_t* outlier_idx, 
-                       T* sub_x, T* sub_weight, int m, int k, int n, int num_outlier_idx) {
-  __shared__ int32_t k_ids_shm[KFP]; 
-  extern __shared__ int32_t outlier_idx_shm[];
+                       T* sub_x, T* sub_weight, int m, int k, int n, int num_outlier_idx, int kfp_num) {
+  extern __shared__ int32_t k_ids_shm[]; 
+  // extern __shared__ int32_t outlier_idx_shm[];
   int32_t cnt = 0;
   if (threadIdx.x == 0) {
     #pragma unroll
-    for (int i = 0; i < KFP; ++i) {
+    for (int i = 0; i < kfp_num; ++i) {
       k_ids_shm[i] = -1;
     }
+    // for (int i = 0; i < num_outlier_idx; ++i) {
+    //   outlier_idx_shm[i] = outlier_idx[i];
+    // }
     for (int i = 0; i < num_outlier_idx; ++i) {
-      outlier_idx_shm[i] = outlier_idx[i];
-    }
-    for (int i = 0; i < num_outlier_idx; ++i) {
-      int32_t outlier_id = outlier_idx_shm[i];
+      int32_t outlier_id = outlier_idx[i];
       if (outlier_id == 0) continue;
       for (int j = 0; j < 32; ++j) {
         if (outlier_id & (1 << j)) {
-          if (cnt >= KFP)  {
-            // printf("!!!!warning!!! with cnt=%d\n", cnt);
-            break;
-          }
+          // if (cnt >= kfp_num)  {
+          //   // printf("!!!!warning!!! with cnt=%d\n", cnt);
+          //   break;
+          // }
           k_ids_shm[cnt++] = i * 32 + j;
         }
       }
@@ -239,10 +263,10 @@ __global__ void SplitKernel(const T* x, const int8_t* weight, const T* weight_sc
   int32_t k_id = k_ids_shm[threadIdx.x];
   if ( k_id == -1) return;
   for (int row = blockIdx.x; row < m; row += gridDim.x) {
-    sub_x[row * KFP + threadIdx.x] = x[row * k + k_id];
+    sub_x[row * kfp_num + threadIdx.x] = x[row * k + k_id];
   }        
   for (int row = blockIdx.x; row < n; row += gridDim.x) {
-    sub_weight[row * KFP + threadIdx.x] = DequantFunc<T>()(weight[row * k + k_id], weight_scale[row]);
+    sub_weight[row * kfp_num + threadIdx.x] = DequantFunc<T>()(weight[row * k + k_id], weight_scale[row]);
   }                   
     
 }
@@ -281,7 +305,7 @@ void LaunchFillKernel(T* input, T value, int64_t num, GpuLaunchConfig* gpu_confi
 }
 
 template<typename T> 
-void LaunchReduceAbsMaxKernel(const T* x, const float threshold, const int32_t rows, const int32_t cols, 
+void LaunchReduceAbsMaxQuantKernel(const T* x, const float threshold, const int32_t rows, const int32_t cols, 
                                    T* row_ranges, int32_t* outlier_idx, int8_t* quant_x, gpuStream_t stream) {
   constexpr int NumThreads=256;
   constexpr int VecSize= 16 / sizeof(T);
@@ -289,21 +313,23 @@ void LaunchReduceAbsMaxKernel(const T* x, const float threshold, const int32_t r
   using DataT = typename PDDataTypeTraits<T>::DataType; 
 
   ReduceAbsMaxKernel<DataT, VecSize><<<rows, NumThreads, 0, stream>>>(reinterpret_cast<const DataT*>(x), threshold, rows, cols, 
-                                                                  reinterpret_cast<DataT*>(row_ranges), outlier_idx, quant_x);
+                                                                  reinterpret_cast<DataT*>(row_ranges), outlier_idx);
+  QuantActKernel<DataT, VecSize><<<rows, NumThreads, 0, stream>>>(reinterpret_cast<const DataT*>(x), rows, cols, 
+                                                                  reinterpret_cast<DataT*>(row_ranges), outlier_idx, quant_x);                                                            
 }
 
 template<typename T>
 void LaunchSplitKernel(const T* x, const int8_t* weight, const T* weight_scale, const int32_t* outlier_idx, 
-                       T* sub_x, T* sub_weight, int m, int k, int n, gpuStream_t stream) {
-  constexpr int NumThreads=KFP;
+                       T* sub_x, T* sub_weight, int m, int k, int n, int kfp_num, gpuStream_t stream) {
+  int NumThreads=kfp_num;
   int max_row = m > n ? m : n;
   int64_t num_outlier_idx = (k + 31) / 32;    
 
 
   using DataT = typename PDDataTypeTraits<T>::DataType;
-  SplitKernel<DataT><<<max_row, NumThreads, num_outlier_idx * sizeof(int32_t), stream>>>(reinterpret_cast<const DataT*>(x), weight, 
+  SplitKernel<DataT><<<max_row, NumThreads, kfp_num * sizeof(int32_t), stream>>>(reinterpret_cast<const DataT*>(x), weight, 
                                                           reinterpret_cast<const DataT*>(weight_scale), outlier_idx, 
-                                                          reinterpret_cast<DataT*>(sub_x), reinterpret_cast<DataT*>(sub_weight), m, k, n, num_outlier_idx);            
+                                                          reinterpret_cast<DataT*>(sub_x), reinterpret_cast<DataT*>(sub_weight), m, k, n, num_outlier_idx, kfp_num);            
 }
 
 template <typename T>
@@ -344,137 +370,83 @@ void LLMGemm(const phi::GPUContext& dev_ctx,
         phi::backends::gpu::GetGpuLaunchConfig1D(
             dev_ctx, num_outlier_idx, 16 / sizeof(int32_t)));
   LaunchFillKernel(outlier_idx.data<int32_t>(), 0, num_outlier_idx, gpu_config.get(), dev_ctx.stream());
-  // VLOG(1) << "LaunchReduceAbsMaxKernel";
-  LaunchReduceAbsMaxKernel(input->data<T>(), threshold, m, k, 
+  // VLOG(1) << "LaunchReduceAbsMaxQuantKernel";
+  LaunchReduceAbsMaxQuantKernel(input->data<T>(), threshold, m, k, 
                           row_ranges.data<T>(), outlier_idx.data<int32_t>(), quant_input.data<int8_t>(), dev_ctx.stream());
-  PADDLE_ENFORCE_GPU_SUCCESS(cudaDeviceSynchronize());
+  // PADDLE_ENFORCE_GPU_SUCCESS(cudaDeviceSynchronize());
   // VLOG(1) << "input " << *input;
-  // VLOG(1) << "row_ranges " << row_ranges;
-  // VLOG(1) << "quant_input " << quant_input;
-  VLOG(1) << outlier_idx;
-              
+  VLOG(1) << "row_ranges " << row_ranges;
+  VLOG(1) << "quant_input " << quant_input;
+  // VLOG(1) << outlier_idx;
 
-  phi::DenseTensor sub_input, sub_weight, sub_out;
-  sub_input.Resize({m, KFP});
-  sub_weight.Resize({n, KFP});
-  sub_out.Resize({m, n});
-  dev_ctx.Alloc<T>(&sub_input);
-  dev_ctx.Alloc<T>(&sub_weight);
-  dev_ctx.Alloc<T>(&sub_out);
-
-  // Fill<T, 16 / sizeof(T)><<<m, KFP, 0, dev_ctx.stream()>>>(sub_input.data<T>(), static_cast<T>(0), sub_input.numel());
-  gpu_config = std::make_unique<GpuLaunchConfig>(
-        phi::backends::gpu::GetGpuLaunchConfig1D(
-            dev_ctx, sub_input.numel(), 16 / sizeof(T)));
-  LaunchFillKernel(sub_input.data<T>(), static_cast<T>(0), sub_input.numel(), gpu_config.get(), dev_ctx.stream());
-  // Fill<T, 16 / sizeof(T)><<<n, KFP, 0, dev_ctx.stream()>>>(sub_weight.data<T>(), static_cast<T>(0), sub_weight.numel());
-  gpu_config = std::make_unique<GpuLaunchConfig>(
-        phi::backends::gpu::GetGpuLaunchConfig1D(
-            dev_ctx, sub_weight.numel(), 16 / sizeof(T)));
-  LaunchFillKernel(sub_weight.data<T>(), static_cast<T>(0), sub_weight.numel(), gpu_config.get(), dev_ctx.stream());
-
-  // VLOG(1) << "LaunchSplitKernel";
-
-  LaunchSplitKernel(input->data<T>(), weight->data<int8_t>(), weight_scale->data<T>(), outlier_idx.data<int32_t>(), 
-                       sub_input.data<T>(), sub_weight.data<T>(), m, k, n, dev_ctx.stream());
-  PADDLE_ENFORCE_GPU_SUCCESS(cudaDeviceSynchronize());
-  // VLOG(1) << "sub_input " << sub_input;
-  // VLOG(1) << "sub_weight " << sub_weight;
-
-  // {
-  //   // Test
-  //   std::vector<T> input_vec(m * k);
-  //   cudaMemcpy(input_vec.data(), input->data<T>(), m * k * sizeof(T),cudaMemcpyDeviceToHost);
-
-  //   // Test rowrange
-  //   std::vector<T> row_ranges_vec(m);
-  //   cudaMemcpy(row_ranges_vec.data(), row_ranges.data<T>(), m * sizeof(T),cudaMemcpyDeviceToHost);
-
-  //   std::vector<int32_t> outlier_idx_cpu(num_outlier_idx);
-
-  //   for (int i = 0; i < m; ++i) {
-  //     float row_abs_max = 0;
-  //     for (int j = 0; j < k; ++j) {
-  //       float tmp = abs(static_cast<float>(input_vec[i * k + j]));
-  //       if (tmp > threshold) {
-  //         tmp = 0;
-  //         int int_index = j / 32;
-  //         int inner_index = j % 32;
-  //         outlier_idx_cpu[int_index] |= (1 << inner_index);
-  //       }
-  //       if (tmp > row_abs_max) {
-  //         row_abs_max = tmp;
-  //       }
-  //     }
-  //     if (abs(row_abs_max - static_cast<float>(row_ranges_vec[i])) > 1e-2) {
-  //       PADDLE_THROW(platform::errors::Fatal("row_abs_max error in [%d] with cpu: %f, gpu%f", i, row_abs_max, static_cast<float>(row_ranges_vec[i])));
-  //     }
-  //   }
-
-    // Test outlier
+  // Test outlier
     std::vector<int32_t> outlier_idx_vec(num_outlier_idx);
     cudaMemcpy(outlier_idx_vec.data(), outlier_idx.data<int32_t>(), num_outlier_idx * sizeof(int32_t), cudaMemcpyDeviceToHost);
-    int kfp16_num = 0;
+    int kfp_num = 0;
     for (int i = 0; i < num_outlier_idx; ++i) {
       // if (outlier_idx_cpu[i] != outlier_idx_vec[i]) {
       //   PADDLE_THROW(platform::errors::Fatal("outlier_idx error, idx = [%d]. ", i));
       // }
       while (outlier_idx_vec[i]) {
         outlier_idx_vec[i] = outlier_idx_vec[i] & (outlier_idx_vec[i]-1);
-        ++kfp16_num;
+        ++kfp_num;
       }
     }
-    VLOG(1) << "kfp16_num = " << kfp16_num;
-    if (kfp16_num >= KFP) {
-      PADDLE_THROW(paddle::platform::errors::Fatal("kfp16 num should <= %d", KFP));
-    }
+    VLOG(0) << "kfp_num = " << kfp_num;
+
+  phi::DenseTensor sub_out;
+  sub_out.Resize({m, n});       
+  dev_ctx.Alloc<T>(&sub_out);       
+  if (kfp_num != 0) {
+    phi::DenseTensor sub_input, sub_weight;
+    sub_input.Resize({m, kfp_num});
+    sub_weight.Resize({n, kfp_num});
     
+    dev_ctx.Alloc<T>(&sub_input);
+    dev_ctx.Alloc<T>(&sub_weight);
 
-  //   // Test Split
-  //   std::vector<int> outlier_id_tmp;
-  //   for (int i = 0; i < k; ++i) {
-  //     int int_index = i / 32;
-  //     int inner_index = i % 32;
-  //     if (outlier_idx_vec[int_index] & (1 << inner_index)) {
-  //       outlier_id_tmp.push_back(i);
-  //     }
-  //   }
-  //   std::vector<T> sub_input_vec(m * KFP), sub_input_cpu(m * kfp16_num);
-  //   cudaMemcpy(sub_input_vec.data(), sub_input.data<T>(), m * KFP * sizeof(int32_t), cudaMemcpyDeviceToHost);
+    gpu_config = std::make_unique<GpuLaunchConfig>(
+          phi::backends::gpu::GetGpuLaunchConfig1D(
+              dev_ctx, sub_input.numel(), 16 / sizeof(T)));
+    LaunchFillKernel(sub_input.data<T>(), static_cast<T>(0), sub_input.numel(), gpu_config.get(), dev_ctx.stream());
+    gpu_config = std::make_unique<GpuLaunchConfig>(
+          phi::backends::gpu::GetGpuLaunchConfig1D(
+              dev_ctx, sub_weight.numel(), 16 / sizeof(T)));
+    LaunchFillKernel(sub_weight.data<T>(), static_cast<T>(0), sub_weight.numel(), gpu_config.get(), dev_ctx.stream());
 
-  //   for (int i = 0; i < m; ++i) {
-  //     for (int j = 0; j < kfp16_num; ++j) {
-  //       if (sub_input_vec[i * kfp16_num + j] != input_vec[i * k + outlier_id_tmp[j]]) {
-  //         PADDLE_THROW(platform::errors::Fatal("split error [%d, %d]", i, j));
-  //       }
-  //     }
-  //   }
-    
-  // }            
+    // VLOG(1) << "LaunchSplitKernel";
+
+    LaunchSplitKernel(input->data<T>(), weight->data<int8_t>(), weight_scale->data<T>(), outlier_idx.data<int32_t>(), 
+                        sub_input.data<T>(), sub_weight.data<T>(), m, k, n, kfp_num, dev_ctx.stream());
 
 
+      CBLAS_TRANSPOSE transA = CblasNoTrans;
+      CBLAS_TRANSPOSE transB = CblasTrans;
+      T alpha = static_cast<T>(1.0);
+      T beta = static_cast<T>(0.0);
 
-  {
-    CBLAS_TRANSPOSE transA = CblasNoTrans;
-    CBLAS_TRANSPOSE transB = CblasTrans;
-    T alpha = static_cast<T>(1.0);
-    T beta = static_cast<T>(0.0);
+      // (m, n, k) = bsz_seq, output_size, input_size, (input, weight, out)
+      auto blas = phi::funcs::GetBlas<phi::GPUContext, T>(dev_ctx);
+      // VLOG(1) << "GEMM fp16 " << m << " " << n;
+      blas.GEMM(transA,
+                transB,
+                m,
+                n,
+                kfp_num,
+                alpha,
+                sub_input.data<T>(),
+                sub_weight.data<T>(),
+                beta,
+                sub_out.data<T>());
 
-    // (m, n, k) = bsz_seq, output_size, input_size, (input, weight, out)
-    auto blas = phi::funcs::GetBlas<phi::GPUContext, T>(dev_ctx);
-    // VLOG(1) << "GEMM fp16 " << m << " " << n;
-    blas.GEMM(transA,
-              transB,
-              m,
-              n,
-              KFP,
-              alpha,
-              sub_input.data<T>(),
-              sub_weight.data<T>(),
-              beta,
-              sub_out.data<T>());
+    // PADDLE_ENFORCE_GPU_SUCCESS(cudaDeviceSynchronize());
+  } else {
+     gpu_config = std::make_unique<GpuLaunchConfig>(
+          phi::backends::gpu::GetGpuLaunchConfig1D(
+              dev_ctx, sub_out.numel(), 16 / sizeof(T)));
+    LaunchFillKernel(sub_out.data<T>(), static_cast<T>(0), sub_out.numel(), gpu_config.get(), dev_ctx.stream());
   }
-  PADDLE_ENFORCE_GPU_SUCCESS(cudaDeviceSynchronize());
+  
 
   phi::DenseTensor int_out;
   int_out.Resize({m, n});
@@ -491,11 +463,11 @@ void LLMGemm(const phi::GPUContext& dev_ctx,
                  (void*)workspace->data<int8_t>(),
                   workspace->numel());
   }
-  PADDLE_ENFORCE_GPU_SUCCESS(cudaDeviceSynchronize());
+  // PADDLE_ENFORCE_GPU_SUCCESS(cudaDeviceSynchronize());
 
   // VLOG(1) << "LaunchDequantMergeKernel";
   LaunchDequantMergeKernel<T>(int_out.data<int32_t>(), sub_out.data<T>(), row_ranges.data<T>(), weight_scale->data<T>(), output->data<T>(), m, n, dev_ctx.stream());
-  PADDLE_ENFORCE_GPU_SUCCESS(cudaDeviceSynchronize());
+  // PADDLE_ENFORCE_GPU_SUCCESS(cudaDeviceSynchronize());
 }
 
 
