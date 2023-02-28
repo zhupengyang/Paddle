@@ -26,6 +26,7 @@ limitations under the License. */
 #include "paddle/phi/kernels/gpudnn/softmax_gpudnn.h"
 #include "paddle/phi/kernels/fusion/fused_softmax_mask_kernel.h"
 #include "paddle/phi/kernels/fusion/fused_multihead_attention_kernel.h"
+#include "paddle/phi/kernels/fusion/fused_multihead_attention_variable_kernel.h"
 
 namespace paddle {
 namespace operators {
@@ -352,6 +353,7 @@ class FMHARef {
       const phi::DenseTensor* cache_kv_tensor,
       const phi::DenseTensor* src_mask_tensor,
       const phi::DenseTensor* padding_offset_tensor,
+      const phi::DenseTensor* sequence_lengths_tensor,
       phi::DenseTensor* q_transpose_out_tensor,
       phi::DenseTensor* kv_transpose_out_tensor,
       phi::DenseTensor* cache_kv_out_tensor,
@@ -400,62 +402,83 @@ class FMHARef {
     }
 
     float scale = 1.0f / sqrt(float(head_dim_)); 
-    if (src_mask_tensor != nullptr) {
-      if (src_mask_out_tensor == nullptr && seq_len_ == out_seq_len) {
-        phi::fusion::cutlass_internal::MultiHeadAttentionForwardWrapper<T, phi::GPUContext>(
-          dev_ctx_, 
-          q_ptr, 
-          k_ptr, 
-          v_ptr, 
-          src_mask_tensor->data<T>(), 
-          scale, 
-          false, /*causal*/
-          batch_size_, 
-          num_head_, 
-          seq_len_, 
-          out_seq_len,  
-          head_dim_, 
-          src_mask_tensor->dims()[3] * src_mask_tensor->dims()[2], 
-          0, 
-          src_mask_tensor->dims()[3],
-          qktv_out_data); 
+    if (sequence_lengths_tensor) {
+      auto *src_mask = src_mask_tensor ? src_mask_tensor->data<T>() : nullptr;
+      phi::fusion::MultiHeadAttentionVariableWrapper<T, phi::GPUContext>(
+        dev_ctx_,
+        q_ptr,
+        k_ptr,
+        v_ptr,
+        sequence_lengths_tensor->data<int>(),
+        src_mask,
+        scale,
+        false,
+        batch_size_,
+        num_head_,
+        seq_len_,
+        out_seq_len,
+        head_dim_,
+        head_dim_,
+        qktv_out_data
+      );
+    } else {
+      if (src_mask_tensor != nullptr) {
+        if (src_mask_out_tensor == nullptr && seq_len_ == out_seq_len) {
+          phi::fusion::cutlass_internal::MultiHeadAttentionForwardWrapper<T, phi::GPUContext>(
+            dev_ctx_,
+            q_ptr,
+            k_ptr,
+            v_ptr,
+            src_mask_tensor->data<T>(),
+            scale,
+            false, /*causal*/
+            batch_size_,
+            num_head_,
+            seq_len_,
+            out_seq_len,
+            head_dim_,
+            src_mask_tensor->dims()[3] * src_mask_tensor->dims()[2],
+            0,
+            src_mask_tensor->dims()[3],
+            qktv_out_data);
+        } else {
+          phi::fusion::cutlass_internal::MultiHeadAttentionForwardWrapper<T, phi::GPUContext>(
+            dev_ctx_,
+            q_ptr,
+            k_ptr,
+            v_ptr,
+            src_mask_tensor->data<T>(),
+            scale,
+            false, /*causal*/
+            batch_size_,
+            num_head_,
+            seq_len_,
+            out_seq_len,
+            head_dim_,
+            src_mask_tensor->dims()[3] * src_mask_tensor->dims()[2],
+            0,
+            src_mask_tensor->dims()[3],
+            qktv_out_data);
+        }
       } else {
         phi::fusion::cutlass_internal::MultiHeadAttentionForwardWrapper<T, phi::GPUContext>(
-          dev_ctx_, 
-          q_ptr, 
-          k_ptr, 
-          v_ptr, 
-          src_mask_tensor->data<T>(), 
-          scale, 
+          dev_ctx_,
+          q_ptr,
+          k_ptr,
+          v_ptr,
+          nullptr,
+          scale,
           false, /*causal*/
-          batch_size_, 
-          num_head_, 
-          seq_len_, 
-          out_seq_len,  
-          head_dim_, 
-          src_mask_tensor->dims()[3] * src_mask_tensor->dims()[2], 
-          0, 
-          src_mask_tensor->dims()[3], 
-          qktv_out_data); 
+          batch_size_,
+          num_head_,
+          seq_len_,
+          out_seq_len,
+          head_dim_,
+          0,
+          0,
+          0,
+          qktv_out_data);
       }
-    } else {
-      phi::fusion::cutlass_internal::MultiHeadAttentionForwardWrapper<T, phi::GPUContext>(
-        dev_ctx_, 
-        q_ptr, 
-        k_ptr, 
-        v_ptr, 
-        nullptr, 
-        scale, 
-        false, /*causal*/
-        batch_size_, 
-        num_head_, 
-        seq_len_, 
-        out_seq_len,  
-        head_dim_, 
-        0, 
-        0, 
-        0, 
-        qktv_out_data); 
     }
 
     // transpose: [0, 2, 1, 3]
