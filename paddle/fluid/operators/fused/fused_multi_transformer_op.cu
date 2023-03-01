@@ -336,8 +336,11 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
     auto ffn_mixgemm_max_size=std::max(dim_ffn, dim_embed);
     auto mixgemm_max_size = std::max(qkv_mixgemm_max_size,ffn_mixgemm_max_size);
     auto mixgemm_workspace_size_bytes = mixed_gemm_runner.getWorkspaceSize(token_num, mixgemm_max_size, mixgemm_max_size);
-    mixgemm_workspace.Resize({mixgemm_workspace_size_bytes});
-    auto *mixgemm_workspace_data = reinterpret_cast<char*>(dev_ctx.Alloc<uint8_t>(&mixgemm_workspace, mixgemm_workspace_size_bytes));
+    char* mixgemm_workspace_data=nullptr;
+    if(quant_weight){
+      mixgemm_workspace.Resize({mixgemm_workspace_size_bytes});
+      mixgemm_workspace_data = reinterpret_cast<char*>(dev_ctx.Alloc<uint8_t>(&mixgemm_workspace, mixgemm_workspace_size_bytes));
+    }
 
 
     // calc
@@ -1225,8 +1228,11 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
     auto ffn_mixgemm_max_size=std::max(dim_ffn, dim_embed);
     auto mixgemm_max_size = std::max(qkv_mixgemm_max_size,ffn_mixgemm_max_size);
     auto mixgemm_workspace_size_bytes = mixed_gemm_runner.getWorkspaceSize(token_num, mixgemm_max_size, mixgemm_max_size);
-    mixgemm_workspace.Resize({mixgemm_workspace_size_bytes});
-    auto *mixgemm_workspace_data = reinterpret_cast<char*>(dev_ctx.Alloc<uint8_t>(&mixgemm_workspace, mixgemm_workspace_size_bytes));
+    char* mixgemm_workspace_data=nullptr;
+    if(quant_weight){
+      mixgemm_workspace.Resize({mixgemm_workspace_size_bytes});
+      mixgemm_workspace_data = reinterpret_cast<char*>(dev_ctx.Alloc<uint8_t>(&mixgemm_workspace, mixgemm_workspace_size_bytes));
+    }
 
     // calc
     auto *out = ctx.Output<phi::DenseTensor>("Out");
