@@ -230,29 +230,66 @@ __global__ void Fill(T* input, T value, int64_t num) {
 }
 
 
+// template<typename T>
+// __global__ void SplitKernel(const T* x, const int8_t* weight, const T* weight_scale, const int32_t* outlier_idx, 
+//                        T* sub_x, T* sub_weight, int m, int k, int n, int num_outlier_idx, int kfp_num) {
+//   extern __shared__ int32_t k_ids_shm[]; 
+//   // extern __shared__ int32_t outlier_idx_shm[];
+//   int32_t cnt = 0;
+//   if (threadIdx.x == 0) {
+//     #pragma unroll
+//     for (int i = 0; i < kfp_num; ++i) {
+//       k_ids_shm[i] = -1;
+//     }
+//     // for (int i = 0; i < num_outlier_idx; ++i) {
+//     //   outlier_idx_shm[i] = outlier_idx[i];
+//     // }
+//     for (int i = 0; i < num_outlier_idx; ++i) {
+//       int32_t outlier_id = outlier_idx[i];
+//       if (outlier_id == 0) continue;
+//       for (int j = 0; j < 32; ++j) {
+//         if (outlier_id & (1 << j)) {
+//           // if (cnt >= kfp_num)  {
+//           //   // printf("!!!!warning!!! with cnt=%d\n", cnt);
+//           //   break;
+//           // }
+//           k_ids_shm[cnt++] = i * 32 + j;
+//         }
+//       }
+//     }
+//   }  
+                    
+//   __syncthreads();
+//   int32_t k_id = k_ids_shm[threadIdx.x];
+//   if ( k_id == -1) return;
+//   for (int row = blockIdx.x; row < m; row += gridDim.x) {
+//     sub_x[row * kfp_num + threadIdx.x] = x[row * k + k_id];
+//   }        
+//   for (int row = blockIdx.x; row < n; row += gridDim.x) {
+//     sub_weight[row * kfp_num + threadIdx.x] = DequantFunc<T>()(weight[row * k + k_id], weight_scale[row]);
+//   }                   
+    
+// }
+
 template<typename T>
 __global__ void SplitKernel(const T* x, const int8_t* weight, const T* weight_scale, const int32_t* outlier_idx, 
-                       T* sub_x, T* sub_weight, int m, int k, int n, int num_outlier_idx, int kfp_num) {
+                       T* sub_x, T* sub_weight, 
+                            int m, int k, int n, int num_outlier_idx, int kfp_num, 
+                            int sub_x_elem_cnt, int sub_w_elem_cnt, int elem_cnt) {
   extern __shared__ int32_t k_ids_shm[]; 
-  // extern __shared__ int32_t outlier_idx_shm[];
   int32_t cnt = 0;
+  
   if (threadIdx.x == 0) {
     #pragma unroll
     for (int i = 0; i < kfp_num; ++i) {
       k_ids_shm[i] = -1;
     }
-    // for (int i = 0; i < num_outlier_idx; ++i) {
-    //   outlier_idx_shm[i] = outlier_idx[i];
-    // }
+    
     for (int i = 0; i < num_outlier_idx; ++i) {
       int32_t outlier_id = outlier_idx[i];
       if (outlier_id == 0) continue;
       for (int j = 0; j < 32; ++j) {
         if (outlier_id & (1 << j)) {
-          // if (cnt >= kfp_num)  {
-          //   // printf("!!!!warning!!! with cnt=%d\n", cnt);
-          //   break;
-          // }
           k_ids_shm[cnt++] = i * 32 + j;
         }
       }
@@ -260,15 +297,33 @@ __global__ void SplitKernel(const T* x, const int8_t* weight, const T* weight_sc
   }  
                     
   __syncthreads();
-  int32_t k_id = k_ids_shm[threadIdx.x];
-  if ( k_id == -1) return;
-  for (int row = blockIdx.x; row < m; row += gridDim.x) {
-    sub_x[row * kfp_num + threadIdx.x] = x[row * k + k_id];
-  }        
-  for (int row = blockIdx.x; row < n; row += gridDim.x) {
-    sub_weight[row * kfp_num + threadIdx.x] = DequantFunc<T>()(weight[row * k + k_id], weight_scale[row]);
-  }                   
-    
+  
+  for(int linear_idx=blockIdx.x * blockDim.x + threadIdx.x; linear_idx < elem_cnt; linear_idx+=blockDim.x * gridDim.x){
+    int32_t row_idx = linear_idx / kfp_num; 
+    int32_t col_idx = linear_idx % kfp_num;
+    int32_t k_id = k_ids_shm[col_idx];
+    if (k_id == -1) continue;
+    if(linear_idx < sub_x_elem_cnt){
+        sub_x[row_idx * kfp_num + col_idx] = x[row_idx * k + k_id];
+    } 
+    if(linear_idx < sub_w_elem_cnt){
+        sub_weight[row_idx * kfp_num + col_idx] = DequantFunc<T>()(weight[row_idx * k + k_id], weight_scale[row_idx]);
+    }
+  }
+}
+
+__global__ void UpdateOutlier(int32_t* outlier_idx, int32_t* total_num){
+    constexpr int IntSize = 32;
+
+    int32_t outlier_val = outlier_idx[threadIdx.x]; 
+    #pragma unroll 
+    for(int i = 0; i < IntSize; i++){
+      while (outlier_val) {
+        outlier_val = outlier_val & (outlier_val-1);
+        // ++kfp_num;
+        atomicAdd(total_num, 1); 
+      }
+    }
 }
 
 // Input: x:int32:[m, n], x_fp16:T:[m, n], input_range:T:[m], weight_scale:T:[n]
@@ -318,18 +373,50 @@ void LaunchReduceAbsMaxQuantKernel(const T* x, const float threshold, const int3
                                                                   reinterpret_cast<DataT*>(row_ranges), outlier_idx, quant_x);                                                            
 }
 
+// template<typename T>
+// void LaunchSplitKernel(const T* x, const int8_t* weight, const T* weight_scale, const int32_t* outlier_idx, 
+//                        T* sub_x, T* sub_weight, int m, int k, int n, int kfp_num, gpuStream_t stream) {
+//   int NumThreads=kfp_num;
+//   int max_row = m > n ? m : n;
+//   int64_t num_outlier_idx = (k + 31) / 32;    
+
+
+//   using DataT = typename PDDataTypeTraits<T>::DataType;
+//   SplitKernel<DataT><<<max_row, NumThreads, kfp_num * sizeof(int32_t), stream>>>(reinterpret_cast<const DataT*>(x), weight, 
+//                                                           reinterpret_cast<const DataT*>(weight_scale), outlier_idx, 
+//                                                           reinterpret_cast<DataT*>(sub_x), reinterpret_cast<DataT*>(sub_weight), m, k, n, num_outlier_idx, kfp_num);            
+// }
+
 template<typename T>
 void LaunchSplitKernel(const T* x, const int8_t* weight, const T* weight_scale, const int32_t* outlier_idx, 
                        T* sub_x, T* sub_weight, int m, int k, int n, int kfp_num, gpuStream_t stream) {
-  int NumThreads=kfp_num;
+  // kfp_num 
+  int NumThreads=256;
+  constexpr int kNumWaves = 16; 
+  int dev;
+  cudaGetDevice(&dev);
+  int sm_count;
+  cudaDeviceGetAttribute(&sm_count, cudaDevAttrMultiProcessorCount, dev);
+  int tpm;
+  cudaDeviceGetAttribute(&tpm, cudaDevAttrMaxThreadsPerMultiProcessor, dev);
   int max_row = m > n ? m : n;
-  int64_t num_outlier_idx = (k + 31) / 32;    
+  const int elem_cnt = max_row * kfp_num; 
+  const int grid = std::max<int>(1, std::min<int64_t>((elem_cnt + NumThreads - 1) / NumThreads,
+                                                   sm_count * tpm / NumThreads * kNumWaves));
+  int64_t num_outlier_idx = (k + 31) / 32;  
 
+  const int32_t sub_x_elem_cnt = m * kfp_num; 
+  const int32_t sub_w_elem_cnt = n * kfp_num; 
 
   using DataT = typename PDDataTypeTraits<T>::DataType;
-  SplitKernel<DataT><<<max_row, NumThreads, kfp_num * sizeof(int32_t), stream>>>(reinterpret_cast<const DataT*>(x), weight, 
-                                                          reinterpret_cast<const DataT*>(weight_scale), outlier_idx, 
-                                                          reinterpret_cast<DataT*>(sub_x), reinterpret_cast<DataT*>(sub_weight), m, k, n, num_outlier_idx, kfp_num);            
+  SplitKernel<DataT><<<grid, NumThreads, kfp_num * sizeof(int32_t), stream>>>(reinterpret_cast<const DataT*>(x), weight, 
+                                                                  reinterpret_cast<const DataT*>(weight_scale), outlier_idx, 
+                                                                     reinterpret_cast<DataT*>(sub_x), 
+                                                                     reinterpret_cast<DataT*>(sub_weight), m, k, n, num_outlier_idx, 
+                                                                     kfp_num, 
+                                                                     sub_x_elem_cnt, 
+                                                                     sub_w_elem_cnt, 
+                                                                     elem_cnt);            
 }
 
 template <typename T>
@@ -366,10 +453,11 @@ void LLMGemm(const phi::GPUContext& dev_ctx,
   dev_ctx.Alloc<int8_t>(&quant_input);
 
   // Fill<int32_t, 4><<<num_outlier_idx, 1, 0, dev_ctx.stream()>>>(outlier_idx.data<int32_t>(), 0, num_outlier_idx);
-  auto gpu_config = std::make_unique<GpuLaunchConfig>(
-        phi::backends::gpu::GetGpuLaunchConfig1D(
-            dev_ctx, num_outlier_idx, 16 / sizeof(int32_t)));
-  LaunchFillKernel(outlier_idx.data<int32_t>(), 0, num_outlier_idx, gpu_config.get(), dev_ctx.stream());
+  // auto gpu_config = std::make_unique<GpuLaunchConfig>(
+  //       phi::backends::gpu::GetGpuLaunchConfig1D(
+  //           dev_ctx, num_outlier_idx, 16 / sizeof(int32_t)));
+  // LaunchFillKernel(outlier_idx.data<int32_t>(), 0, num_outlier_idx, gpu_config.get(), dev_ctx.stream());
+  PADDLE_ENFORCE_GPU_SUCCESS(	cudaMemsetAsync(outlier_idx.data<int32_t>(), 0, num_outlier_idx * sizeof(int32_t), dev_ctx.stream()));
   // VLOG(1) << "LaunchReduceAbsMaxQuantKernel";
   LaunchReduceAbsMaxQuantKernel(input->data<T>(), threshold, m, k, 
                           row_ranges.data<T>(), outlier_idx.data<int32_t>(), quant_input.data<int8_t>(), dev_ctx.stream());
@@ -380,18 +468,25 @@ void LLMGemm(const phi::GPUContext& dev_ctx,
   // VLOG(1) << outlier_idx;
 
   // Test outlier
-    std::vector<int32_t> outlier_idx_vec(num_outlier_idx);
-    cudaMemcpy(outlier_idx_vec.data(), outlier_idx.data<int32_t>(), num_outlier_idx * sizeof(int32_t), cudaMemcpyDeviceToHost);
-    int kfp_num = 0;
-    for (int i = 0; i < num_outlier_idx; ++i) {
-      // if (outlier_idx_cpu[i] != outlier_idx_vec[i]) {
-      //   PADDLE_THROW(platform::errors::Fatal("outlier_idx error, idx = [%d]. ", i));
-      // }
-      while (outlier_idx_vec[i]) {
-        outlier_idx_vec[i] = outlier_idx_vec[i] & (outlier_idx_vec[i]-1);
-        ++kfp_num;
-      }
-    }
+    // std::vector<int32_t> outlier_idx_vec(num_outlier_idx);
+    // cudaMemcpy(outlier_idx_vec.data(), outlier_idx.data<int32_t>(), num_outlier_idx * sizeof(int32_t), cudaMemcpyDeviceToHost);
+    int32_t kfp_num = 0;
+    phi::DenseTensor kfp_num_tensor;
+    kfp_num_tensor.Resize({1});
+    dev_ctx.Alloc<int32_t>(&kfp_num_tensor);
+
+    // for (int i = 0; i < num_outlier_idx; ++i) {
+    //   // if (outlier_idx_cpu[i] != outlier_idx_vec[i]) {
+    //   //   PADDLE_THROW(platform::errors::Fatal("outlier_idx error, idx = [%d]. ", i));
+    //   // }
+    //   while (outlier_idx_vec[i]) {
+    //     outlier_idx_vec[i] = outlier_idx_vec[i] & (outlier_idx_vec[i]-1);
+    //     ++kfp_num;
+    //   }
+    // }
+    PADDLE_ENFORCE_GPU_SUCCESS(cudaMemsetAsync(kfp_num_tensor.data<int32_t>(), 0, sizeof(int32_t), dev_ctx.stream()));
+    UpdateOutlier<<<1, num_outlier_idx, 0, dev_ctx.stream()>>>(outlier_idx.data<int32_t>(), kfp_num_tensor.data<int32_t>()); 
+    cudaMemcpy(&kfp_num, kfp_num_tensor.data<int32_t>(), sizeof(int32_t), cudaMemcpyDeviceToHost);
     VLOG(1) << "kfp_num = " << kfp_num;
 
   phi::DenseTensor sub_out;
@@ -405,14 +500,19 @@ void LLMGemm(const phi::GPUContext& dev_ctx,
     dev_ctx.Alloc<T>(&sub_input);
     dev_ctx.Alloc<T>(&sub_weight);
 
-    gpu_config = std::make_unique<GpuLaunchConfig>(
-          phi::backends::gpu::GetGpuLaunchConfig1D(
-              dev_ctx, sub_input.numel(), 16 / sizeof(T)));
-    LaunchFillKernel(sub_input.data<T>(), static_cast<T>(0), sub_input.numel(), gpu_config.get(), dev_ctx.stream());
-    gpu_config = std::make_unique<GpuLaunchConfig>(
-          phi::backends::gpu::GetGpuLaunchConfig1D(
-              dev_ctx, sub_weight.numel(), 16 / sizeof(T)));
-    LaunchFillKernel(sub_weight.data<T>(), static_cast<T>(0), sub_weight.numel(), gpu_config.get(), dev_ctx.stream());
+    // gpu_config = std::make_unique<GpuLaunchConfig>(
+    //       phi::backends::gpu::GetGpuLaunchConfig1D(
+    //           dev_ctx, sub_input.numel(), 16 / sizeof(T)));
+    // LaunchFillKernel(sub_input.data<T>(), static_cast<T>(0), sub_input.numel(), gpu_config.get(), dev_ctx.stream());
+    PADDLE_ENFORCE_GPU_SUCCESS(cudaMemsetAsync(sub_input.data<T>(), 0, sub_input.numel() * sizeof(T), dev_ctx.stream()));
+    
+    // gpu_config = std::make_unique<GpuLaunchConfig>(
+    //       phi::backends::gpu::GetGpuLaunchConfig1D(
+    //           dev_ctx, sub_weight.numel(), 16 / sizeof(T)));
+    // LaunchFillKernel(sub_weight.data<T>(), static_cast<T>(0), sub_weight.numel(), gpu_config.get(), dev_ctx.stream());
+
+
+    PADDLE_ENFORCE_GPU_SUCCESS(cudaMemsetAsync(sub_weight.data<T>(), 0, sub_weight.numel() * sizeof(T), dev_ctx.stream()));
 
     // VLOG(1) << "LaunchSplitKernel";
 
@@ -441,10 +541,12 @@ void LLMGemm(const phi::GPUContext& dev_ctx,
 
     // PADDLE_ENFORCE_GPU_SUCCESS(cudaDeviceSynchronize());
   } else {
-     gpu_config = std::make_unique<GpuLaunchConfig>(
-          phi::backends::gpu::GetGpuLaunchConfig1D(
-              dev_ctx, sub_out.numel(), 16 / sizeof(T)));
-    LaunchFillKernel(sub_out.data<T>(), static_cast<T>(0), sub_out.numel(), gpu_config.get(), dev_ctx.stream());
+    //  gpu_config = std::make_unique<GpuLaunchConfig>(
+    //       phi::backends::gpu::GetGpuLaunchConfig1D(
+    //           dev_ctx, sub_out.numel(), 16 / sizeof(T)));
+    // LaunchFillKernel(sub_out.data<T>(), static_cast<T>(0), sub_out.numel(), gpu_config.get(), dev_ctx.stream());
+    PADDLE_ENFORCE_GPU_SUCCESS(cudaMemsetAsync(sub_out.data<T>(), 0, sub_out.numel() * sizeof(T), dev_ctx.stream()));
+    
   }
   
 
