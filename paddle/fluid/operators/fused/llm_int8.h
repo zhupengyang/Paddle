@@ -375,8 +375,8 @@ void LLMGemm(const phi::GPUContext& dev_ctx,
                           row_ranges.data<T>(), outlier_idx.data<int32_t>(), quant_input.data<int8_t>(), dev_ctx.stream());
   // PADDLE_ENFORCE_GPU_SUCCESS(cudaDeviceSynchronize());
   // VLOG(1) << "input " << *input;
-  VLOG(1) << "row_ranges " << row_ranges;
-  VLOG(1) << "quant_input " << quant_input;
+  VLOG(2) << "row_ranges " << row_ranges;
+  VLOG(2) << "quant_input " << quant_input;
   // VLOG(1) << outlier_idx;
 
   // Test outlier
@@ -392,7 +392,7 @@ void LLMGemm(const phi::GPUContext& dev_ctx,
         ++kfp_num;
       }
     }
-    VLOG(0) << "kfp_num = " << kfp_num;
+    VLOG(1) << "kfp_num = " << kfp_num;
 
   phi::DenseTensor sub_out;
   sub_out.Resize({m, n});       
