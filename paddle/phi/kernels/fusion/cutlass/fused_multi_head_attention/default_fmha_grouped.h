@@ -132,7 +132,6 @@ struct DefaultFMHAGrouped {
 
     using ThreadblockShape = cutlass::gemm::GemmShape<kQueriesPerBlock, kKeysPerBlock, GemmType::ThreadK>;
     using WarpShape = cutlass::gemm::GemmShape<32, 32, GemmType::WarpK>;
-    // using WarpShape = cutlass::gemm::GemmShape<32, 64, GemmType::WarpK>;
     using InstructionShape = typename GemmType::InstructionShape;
 
     static int const kStages = DefaultConfig::kStages;

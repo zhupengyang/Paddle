@@ -134,7 +134,7 @@ void LaunchMultiHeadAttentionKernel(Params params,
       SingleValueIteration,
       cutlass::gemm::kernel::GroupScheduleMode::kDeviceOnly,
       AddMask,
-      MaskBroadcastRow>::FMHAKernel; // kHostPrecompute
+      MaskBroadcastRow>::FMHAKernel; // kHostPrecompute kDeviceOnly
   using FMHA = cutlass::gemm::device::GemmGrouped<AttentionKernel>;
   using scalar_t = typename FMHA::GemmKernel::scalar_t;
   using accum_t = typename FMHA::GemmKernel::accum_t;
@@ -357,23 +357,25 @@ void DispatchFMHAIsAligned(Params params, const phi::GPUContext& ctx) {
 template <typename T>
 void DispatchFMHAArchTag(Params params, const phi::GPUContext& ctx) {
   const int compute_capability = ctx.GetComputeCapability();
-//   if (compute_capability == 80) {
-//     DispatchFMHAIsAligned<T, cutlass::arch::Sm80>(params, ctx);
-//   }  else {
-//     return;
-//   }
   if (compute_capability == 80) {
     DispatchFMHAIsAligned<T, cutlass::arch::Sm80>(params, ctx);
-  } else if (compute_capability == 75) {
-    DispatchFMHAIsAligned<T, cutlass::arch::Sm75>(params, ctx);
-  } else if (compute_capability == 70) {
-    DispatchFMHAIsAligned<T, cutlass::arch::Sm70>(params, ctx);
-  } else {
-    PADDLE_THROW(phi::errors::Unimplemented(
-        "Currently cutlass fused multihead attention kernel "
-        "only support arch: SM80, SM75, SM70"));
+  }  else {
     return;
   }
+
+//   LaunchMultiHeadAttentionKernel<T, cutlass::arch::Sm80, true, false, 16, 256, false, true, false>(params, ctx);
+//   if (compute_capability == 80) {
+//     DispatchFMHAIsAligned<T, cutlass::arch::Sm80>(params, ctx);
+//   } else if (compute_capability == 75) {
+//     DispatchFMHAIsAligned<T, cutlass::arch::Sm75>(params, ctx);
+//   } else if (compute_capability == 70) {
+//     DispatchFMHAIsAligned<T, cutlass::arch::Sm70>(params, ctx);
+//   } else {
+//     PADDLE_THROW(phi::errors::Unimplemented(
+//         "Currently cutlass fused multihead attention kernel "
+//         "only support arch: SM80, SM75, SM70"));
+//     return;
+//   }
 }
 
 void DispatchFusedMultiheadAttentionKernel(Params params,
