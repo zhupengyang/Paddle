@@ -38,10 +38,25 @@ limitations under the License. */
 #include "paddle/fluid/platform/device/gpu/nccl_helper.h"
 #endif
 
+#include <fstream> 
+#include <iomanip> 
+
 DECLARE_bool(gemm_use_half_precision_compute_type);
 
 namespace paddle {
 namespace operators {
+
+template <typename T>
+void print_tensor(const T *t, int size, const char *name){
+  using namespace std;
+  ofstream out_txt_file;
+  out_txt_file.open(name, ios::out | ios::trunc);
+  out_txt_file << fixed;
+  for(int i=0; i < size; i++){
+    out_txt_file << setprecision(8) << static_cast<float>(t[i]) << endl;
+  }
+  out_txt_file.close();
+}
 
 // for debug
 // #define _DEBUG_FUSED_MULTI_TRANSFORMER

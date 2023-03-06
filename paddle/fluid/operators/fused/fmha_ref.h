@@ -371,7 +371,6 @@ class FMHARef {
     T* qk_out_data = qk_out_tensor->data<T>();
     T* qktv_out_data = qktv_out_tensor->data<T>();
     T* softmax_out_data = softmax_out_tensor->data<T>();
-    T* dropout_out_data = dropout_out_tensor->data<T>();
     T* fmha_out_data = fmha_out_tensor->data<T>();
 
     auto out_seq_len = seq_len_;
@@ -521,7 +520,6 @@ class FMHARef {
     T* qk_out_data = qk_out_tensor->data<T>();
     T* qktv_out_data = qktv_out_tensor->data<T>();
     T* softmax_out_data = softmax_out_tensor->data<T>();
-    T* dropout_out_data = dropout_out_tensor->data<T>();
     T* fmha_out_data = fmha_out_tensor->data<T>();
 
     auto out_seq_len = seq_len_;
@@ -631,6 +629,7 @@ class FMHARef {
     stride_b = gemm_k * gemm_n;
 
     if (dropout_param_.dropout_prob_) {
+      T* dropout_out_data = dropout_out_tensor->data<T>();
       phi::funcs::DropoutFwGPUKernelDriver<T>(
           static_cast<const phi::GPUContext&>(dev_ctx_),
           dropout_param_.is_test_,

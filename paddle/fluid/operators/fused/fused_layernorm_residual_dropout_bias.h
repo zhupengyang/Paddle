@@ -680,8 +680,10 @@ __global__ __launch_bounds__(THREADS_PER_CTA) void fused_fast_ln_fwd_kernel(
     if (!is_test && HasDropout) {
 #pragma unroll
       for (int it = 0, col = c; it < LDGS; it++) {
-        phi::Store<MaskType, VecSize>(
-            mask_vec[it], mask_out_ptr + row * ELTS_PER_ROW + col * VecSize);
+        if (mask_out_ptr) {
+          phi::Store<MaskType, VecSize>(
+              mask_vec[it], mask_out_ptr + row * ELTS_PER_ROW + col * VecSize);
+        }
         col += THREADS_PER_ROW;
       }
     }
@@ -854,8 +856,10 @@ void LaunchLayernormResidualDropoutBias(
                  residual,
                  rows * cols * sizeof(T),
                  ctx.stream());
-    PADDLE_ENFORCE_GPU_SUCCESS(cudaMemsetAsync(
-        mask_data, 0, rows * cols * sizeof(MaskType), ctx.stream()));
+    if (mask_data) {
+      PADDLE_ENFORCE_GPU_SUCCESS(cudaMemsetAsync(
+          mask_data, 0, rows * cols * sizeof(MaskType), ctx.stream()));
+    }
 
     // call layernorm forward
     switch (GetDesiredBlockDim(cols)) {

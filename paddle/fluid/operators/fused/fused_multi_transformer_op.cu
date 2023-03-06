@@ -1139,12 +1139,8 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
     auto *softmax_out_data =
         dev_ctx.Alloc<T>(&softmax_out, softmax_out.numel() * sizeof(T));
 
-    attn_dropout_mask_out.Resize({{bsz, num_head, seq_len, out_seq_len}});
-    auto *attn_dropout_mask_out_data = dev_ctx.Alloc<T>(
-        &attn_dropout_mask_out, attn_dropout_mask_out.numel() * sizeof(T));
-    attn_dropout_out.Resize({{bsz, num_head, seq_len, out_seq_len}});
-    auto *attn_dropout_data_data = dev_ctx.Alloc<T>(
-        &attn_dropout_out, attn_dropout_out.numel() * sizeof(T));
+    T *attn_dropout_mask_out_data = nullptr;
+    T *attn_dropout_data_data = nullptr;
 
     qktv_out.Resize({{bsz, num_head, seq_len, dim_head}});
     auto *qktv_out_data =
@@ -1177,9 +1173,7 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
           dev_ctx.Alloc<T>(&bias_dropout_residual_out,
                            bias_dropout_residual_out.numel() * sizeof(T));
     }
-    dropout_mask_out.Resize({{token_num, dim_embed}});
-    auto *dropout_mask_out_data = dev_ctx.Alloc<uint8_t>(
-        &dropout_mask_out, dropout_mask_out.numel() * sizeof(uint8_t));
+    uint8_t *dropout_mask_out_data = nullptr;
 
     // 6. ffn matmul1
     auto ffn1_weights = ctx.MultiInput<phi::DenseTensor>("FFN1Weight");
@@ -1204,9 +1198,7 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
     ffn1_dropout_out.Resize({{token_num, dim_ffn}});
     auto *ffn1_dropout_out_data = dev_ctx.Alloc<T>(
         &ffn1_dropout_out, ffn1_dropout_out.numel() * sizeof(T));
-    ffn1_dropout_mask.Resize({{token_num, dim_ffn}});
-    auto *ffn1_dropout_mask_data = dev_ctx.Alloc<int8_t>(
-        &ffn1_dropout_mask, ffn1_dropout_mask.numel() * sizeof(int8_t));
+    int8_t *ffn1_dropout_mask_data = nullptr;
 
     // 8. ffn2 matmul
     auto ffn2_weights = ctx.MultiInput<phi::DenseTensor>("FFN2Weight");
