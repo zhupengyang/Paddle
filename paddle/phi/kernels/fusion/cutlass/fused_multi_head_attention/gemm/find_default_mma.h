@@ -10,6 +10,8 @@
     This is really only for the FastF32 case - aka using TensorCores with fp32.
 */
 
+#pragma once
+
 #include "cutlass/gemm/threadblock/default_mma.h"
 #include "cutlass/gemm/threadblock/default_mma_core_simt.h"
 #include "cutlass/gemm/threadblock/default_mma_core_sm70.h"

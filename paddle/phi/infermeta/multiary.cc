@@ -3014,6 +3014,26 @@ void FusedMultiHeadAttentionInferMeta(const MetaTensor& query,
   out->set_layout(query.layout());
 }
 
+void FusedMultiHeadAttentionVariableInferMeta(const MetaTensor& query,
+                                              const MetaTensor& key,
+                                              const MetaTensor& value,
+                                              const MetaTensor& seq_lens,
+                                              const MetaTensor& mask,
+                                              float scale,
+                                              bool causal,
+                                              MetaTensor* out) {
+  const int64_t query_batch_size = query.dims()[0];
+  const int64_t query_seq_length = query.dims()[2];
+  const int64_t query_num_head = query.dims()[1];
+  const int64_t value_head_size = value.dims()[3];
+  std::vector<int64_t> out_dims(
+      {query_batch_size, query_num_head, query_seq_length, value_head_size});
+  out->set_dims(phi::make_ddim(out_dims));
+  out->share_lod(query);
+  out->set_dtype(query.dtype());
+  out->set_layout(query.layout());
+}
+
 }  // namespace phi
 
 PD_REGISTER_INFER_META_FN(batch_norm_infer, phi::BatchNormInferInferMeta);

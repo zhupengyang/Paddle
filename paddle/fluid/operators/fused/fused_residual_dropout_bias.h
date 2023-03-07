@@ -261,7 +261,7 @@ void LaunchResidualDropoutBias(const uint32_t rows,
     } else {
       SetZero<T>(ctx, dst, rows * cols);
     }
-    if (!is_test) {
+    if (!is_test && mask_data) {
       SetZero<MaskType>(ctx, mask_data, rows * cols);
     }
     return;

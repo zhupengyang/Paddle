@@ -335,8 +335,11 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
     auto ffn_mixgemm_max_size=std::max(dim_ffn, dim_embed);
     auto mixgemm_max_size = std::max(qkv_mixgemm_max_size,ffn_mixgemm_max_size);
     auto mixgemm_workspace_size_bytes = mixed_gemm_runner.getWorkspaceSize(token_num, mixgemm_max_size, mixgemm_max_size);
-    mixgemm_workspace.Resize({mixgemm_workspace_size_bytes});
-    auto *mixgemm_workspace_data = reinterpret_cast<char*>(dev_ctx.Alloc<uint8_t>(&mixgemm_workspace, mixgemm_workspace_size_bytes));
+    char* mixgemm_workspace_data=nullptr;
+    if(quant_weight){
+      mixgemm_workspace.Resize({mixgemm_workspace_size_bytes});
+      mixgemm_workspace_data = reinterpret_cast<char*>(dev_ctx.Alloc<uint8_t>(&mixgemm_workspace, mixgemm_workspace_size_bytes));
+    }
 
 
     // calc
@@ -528,6 +531,7 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
           fmha_compute.ComputeForwardWithCutlassFMHA(pre_cache_kv_tensor,
                                                     src_mask,
                                                     tmp_padding_offset_tensor,
+                                                    sequence_lengths,
                                                     &q_transpose_out,
                                                     &kv_transpose_out,
                                                     pre_cache_kv_out_tmp,
@@ -633,6 +637,7 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
           fmha_compute.ComputeForwardWithCutlassFMHA(cache_kv,
                                                     src_mask,
                                                     tmp_padding_offset_tensor,
+                                                    sequence_lengths,
                                                     &q_transpose_out,
                                                     &kv_transpose_out,
                                                     cache_kv_out,
@@ -1136,12 +1141,8 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
     auto *softmax_out_data =
         dev_ctx.Alloc<T>(&softmax_out, softmax_out.numel() * sizeof(T));
 
-    attn_dropout_mask_out.Resize({{bsz, num_head, seq_len, out_seq_len}});
-    auto *attn_dropout_mask_out_data = dev_ctx.Alloc<T>(
-        &attn_dropout_mask_out, attn_dropout_mask_out.numel() * sizeof(T));
-    attn_dropout_out.Resize({{bsz, num_head, seq_len, out_seq_len}});
-    auto *attn_dropout_data_data = dev_ctx.Alloc<T>(
-        &attn_dropout_out, attn_dropout_out.numel() * sizeof(T));
+    T *attn_dropout_mask_out_data = nullptr;
+    T *attn_dropout_data_data = nullptr;
 
     qktv_out.Resize({{bsz, num_head, seq_len, dim_head}});
     auto *qktv_out_data =
@@ -1174,9 +1175,7 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
           dev_ctx.Alloc<T>(&bias_dropout_residual_out,
                            bias_dropout_residual_out.numel() * sizeof(T));
     }
-    dropout_mask_out.Resize({{token_num, dim_embed}});
-    auto *dropout_mask_out_data = dev_ctx.Alloc<uint8_t>(
-        &dropout_mask_out, dropout_mask_out.numel() * sizeof(uint8_t));
+    uint8_t *dropout_mask_out_data = nullptr;
 
     // 6. ffn matmul1
     auto ffn1_weights = ctx.MultiInput<phi::DenseTensor>("FFN1Weight");
@@ -1201,9 +1200,7 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
     ffn1_dropout_out.Resize({{token_num, dim_ffn}});
     auto *ffn1_dropout_out_data = dev_ctx.Alloc<T>(
         &ffn1_dropout_out, ffn1_dropout_out.numel() * sizeof(T));
-    ffn1_dropout_mask.Resize({{token_num, dim_ffn}});
-    auto *ffn1_dropout_mask_data = dev_ctx.Alloc<int8_t>(
-        &ffn1_dropout_mask, ffn1_dropout_mask.numel() * sizeof(int8_t));
+    int8_t *ffn1_dropout_mask_data = nullptr;
 
     // 8. ffn2 matmul
     auto ffn2_weights = ctx.MultiInput<phi::DenseTensor>("FFN2Weight");
@@ -1222,8 +1219,11 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
     auto ffn_mixgemm_max_size=std::max(dim_ffn, dim_embed);
     auto mixgemm_max_size = std::max(qkv_mixgemm_max_size,ffn_mixgemm_max_size);
     auto mixgemm_workspace_size_bytes = mixed_gemm_runner.getWorkspaceSize(token_num, mixgemm_max_size, mixgemm_max_size);
-    mixgemm_workspace.Resize({mixgemm_workspace_size_bytes});
-    auto *mixgemm_workspace_data = reinterpret_cast<char*>(dev_ctx.Alloc<uint8_t>(&mixgemm_workspace, mixgemm_workspace_size_bytes));
+    char* mixgemm_workspace_data=nullptr;
+    if(quant_weight){
+      mixgemm_workspace.Resize({mixgemm_workspace_size_bytes});
+      mixgemm_workspace_data = reinterpret_cast<char*>(dev_ctx.Alloc<uint8_t>(&mixgemm_workspace, mixgemm_workspace_size_bytes));
+    }
 
     // calc
     auto *out = ctx.Output<phi::DenseTensor>("Out");
@@ -1420,6 +1420,7 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
           fmha_compute.ComputeForwardWithCutlassFMHA(pre_cache_kv_tensor,
                                                     src_mask,
                                                     tmp_padding_offset_tensor,
+                                                    sequence_lengths,
                                                     &q_transpose_out,
                                                     &kv_transpose_out,
                                                     pre_cache_kv_out_tmp,
@@ -1524,6 +1525,7 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
           fmha_compute.ComputeForwardWithCutlassFMHA(cache_kv,
                                                     src_mask,
                                                     tmp_padding_offset_tensor,
+                                                    sequence_lengths,
                                                     &q_transpose_out,
                                                     &kv_transpose_out,
                                                     cache_kv_out,

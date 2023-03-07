@@ -232,7 +232,9 @@ void LaunchDropoutActBias(Functor act_functor,
   // dropout_prob == 1.0f
   if (std::abs(dropout_prob - 1.0f) < 1e-5) {
     SetZero<T>(ctx, reinterpret_cast<T *>(dst), rows * cols);
-    SetZero<MaskType>(ctx, mask_data, rows * cols);
+    if (mask_data) {
+      SetZero<MaskType>(ctx, mask_data, rows * cols);
+    }
     return;
   }
 
