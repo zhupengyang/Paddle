@@ -727,6 +727,51 @@ class CublasLtHelper {
 
     status = dyl::cublasLtMatrixLayoutCreate(&c_desc_, c_type_, n, m, n);
     PADDLE_CUBLASLT_STATUS_CHECK(cublasLtMatrixLayoutCreate);
+
+    int algoId = 21;
+    int swizzle = 0;
+    int customOption = 0;
+    int tile = 15;
+    int splitK_val = 0;
+    int reductionScheme = 0;
+    int stages = 23;
+    if (m >= 128) {
+      tile = 20;
+      stages = 17;
+    }
+
+    dyl::cublasLtMatmulAlgoInit(handle_,
+                                compute_type_,
+                                CUDA_R_32I,
+                                CUDA_R_8I,
+                                CUDA_R_8I,
+                                CUDA_R_32I,
+                                CUDA_R_32I,
+                                algoId,
+                                &algo_);
+    dyl::cublasLtMatmulAlgoConfigSetAttribute(
+        &algo_,
+        CUBLASLT_ALGO_CONFIG_CUSTOM_OPTION,
+        &(customOption),
+        sizeof(customOption));
+    dyl::cublasLtMatmulAlgoConfigSetAttribute(
+        &algo_, CUBLASLT_ALGO_CONFIG_TILE_ID, &(tile), sizeof(tile));
+    dyl::cublasLtMatmulAlgoConfigSetAttribute(&algo_,
+                                              CUBLASLT_ALGO_CONFIG_SPLITK_NUM,
+                                              &(splitK_val),
+                                              sizeof(splitK_val));
+    dyl::cublasLtMatmulAlgoConfigSetAttribute(
+        &algo_,
+        CUBLASLT_ALGO_CONFIG_CTA_SWIZZLING,
+        &(swizzle),
+        sizeof(swizzle));
+    dyl::cublasLtMatmulAlgoConfigSetAttribute(
+        &algo_,
+        CUBLASLT_ALGO_CONFIG_REDUCTION_SCHEME,
+        &(reductionScheme),
+        sizeof(int));
+    dyl::cublasLtMatmulAlgoConfigSetAttribute(
+        &algo_, CUBLASLT_ALGO_CONFIG_STAGES_ID, &(stages), sizeof(stages));
   }
   ~CublasLtHelper() {
     dyl::cublasLtMatmulDescDestroy(matmul_desc_);
@@ -745,28 +790,28 @@ class CublasLtHelper {
     cublasStatus_t status;
 
 #if CUDA_VERSION >= 11020
-    cublasLtMatmulAlgo_t* algo =
-        CublasLtAlgoCache::Instance().CublasLtAlgoSelect(handle_,
-                                                         m_,
-                                                         n_,
-                                                         k_,
-                                                         b_dev,
-                                                         a_dev,
-                                                         c_dev,
-                                                         &alpha_,
-                                                         &beta_,
-                                                         matmul_desc_,
-                                                         b_desc_,
-                                                         a_desc_,
-                                                         c_desc_,
-                                                         compute_type_,
-                                                         scale_type_,
-                                                         b_type_,
-                                                         a_type_,
-                                                         c_type_,
-                                                         workspace,
-                                                         workspace_size,
-                                                         stream);
+    // cublasLtMatmulAlgo_t* algo =
+    //     CublasLtAlgoCache::Instance().CublasLtAlgoSelect(handle_,
+    //                                                      m_,
+    //                                                      n_,
+    //                                                      k_,
+    //                                                      b_dev,
+    //                                                      a_dev,
+    //                                                      c_dev,
+    //                                                      &alpha_,
+    //                                                      &beta_,
+    //                                                      matmul_desc_,
+    //                                                      b_desc_,
+    //                                                      a_desc_,
+    //                                                      c_desc_,
+    //                                                      compute_type_,
+    //                                                      scale_type_,
+    //                                                      b_type_,
+    //                                                      a_type_,
+    //                                                      c_type_,
+    //                                                      workspace,
+    //                                                      workspace_size,
+    //                                                      stream);
 
 #endif
 
@@ -783,7 +828,7 @@ class CublasLtHelper {
                                  c_dev,
                                  c_desc_,
 #if CUDA_VERSION >= 11020
-                                 algo,
+                                 &algo_,
                                  workspace,
                                  workspace_size,
 #else
@@ -807,6 +852,8 @@ class CublasLtHelper {
   cublasLtMatrixLayout_t a_desc_;
   cublasLtMatrixLayout_t b_desc_;
   cublasLtMatrixLayout_t c_desc_;
+
+  cublasLtMatmulAlgo_t algo_;
 
   cudaDataType_t scale_type_;
   cudaDataType_t a_type_;
