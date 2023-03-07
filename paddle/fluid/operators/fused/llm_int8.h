@@ -43,16 +43,14 @@ struct MaxFunc{
 template<>
 struct MaxFunc<half>{
   __device__ half operator()(half a, half b){
+#if __CUDA_ARCH__ >= 800
     return __hmax(a, b); 
+#else
+    return max(static_cast<float>(a), static_cast<float>(b));
+#endif
   }
 }; 
 
-template<>
-struct MaxFunc<half2>{
-  __device__ half2 operator()(half2 a, half2 b){
-    return __hmax2(a, b); 
-  }
-};
 
 template<typename T>
 struct AbsFunc{
@@ -64,7 +62,11 @@ struct AbsFunc{
 template<>
 struct AbsFunc<half>{
   __device__ half operator()(half x){
+  #if __CUDA_ARCH__ >= 800
     return __habs(x); 
+  #else
+    return abs(static_cast<float>(x));
+  #endif
   }
 }; 
 
