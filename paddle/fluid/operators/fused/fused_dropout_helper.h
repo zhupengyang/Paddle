@@ -21,6 +21,7 @@ limitations under the License. */
 #include "paddle/phi/kernels/funcs/dropout_impl_util.h"
 #include "paddle/phi/kernels/funcs/functors.h"
 #include "paddle/phi/kernels/layer_norm_kernel.h"
+#include "paddle/fluid/operators/fused/datatype_traits.h"
 
 DECLARE_bool(use_fast_math);
 
@@ -342,17 +343,6 @@ class FusedDropoutHelper {
   DropoutParam dropout_param_;
 };
 
-template <typename T>
-struct PDDataTypeTraits {
-  using DataType = T;
-};
-
-template <>
-struct PDDataTypeTraits<phi::dtype::float16> {
-  // Since LayerNormDirectCUDAFunctor register half type, we need to convert
-  // phi::float16 to half.
-  using DataType = half;
-};
 
 template <typename T,
           typename MaskType,

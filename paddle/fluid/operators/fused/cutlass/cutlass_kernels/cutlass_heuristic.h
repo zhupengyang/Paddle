@@ -25,7 +25,7 @@ struct TileShape {
     int n;
 };
 
-TileShape get_cta_shape_for_config(CutlassTileConfig tile_config)
+static TileShape get_cta_shape_for_config(CutlassTileConfig tile_config)
 {
     switch (tile_config) {
         case CutlassTileConfig::CtaShape32x128x64_WarpShape32x32x64:
@@ -49,7 +49,7 @@ TileShape get_cta_shape_for_config(CutlassTileConfig tile_config)
     }
 }
 
-bool is_valid_split_k_factor(const int64_t   m,
+static bool is_valid_split_k_factor(const int64_t   m,
                              const int64_t   n,
                              const int64_t   k,
                              const TileShape tile_shape,
@@ -89,7 +89,7 @@ bool is_valid_split_k_factor(const int64_t   m,
     return true;
 }
 
-std::vector<CutlassTileConfig> get_candidate_tiles(const bool is_weight_only, 
+static std::vector<CutlassTileConfig> get_candidate_tiles(const bool is_weight_only, 
                                                    const bool is_weight_only_encoder,
                                                    const bool simt_configs_only)
 {
@@ -114,7 +114,7 @@ std::vector<CutlassTileConfig> get_candidate_tiles(const bool is_weight_only,
     return simt_configs_only ? simt_configs : allowed_configs;
 }
 
-std::vector<CutlassGemmConfig> get_candidate_configs(int sm, const bool is_weight_only, const bool is_weight_only_encoder, const bool simt_configs_only)
+static std::vector<CutlassGemmConfig> get_candidate_configs(int sm, const bool is_weight_only, const bool is_weight_only_encoder, const bool simt_configs_only)
 {
     std::vector<CutlassTileConfig> tiles = get_candidate_tiles(is_weight_only, is_weight_only_encoder, simt_configs_only);
 
@@ -132,7 +132,7 @@ std::vector<CutlassGemmConfig> get_candidate_configs(int sm, const bool is_weigh
     return candidate_configs;
 }
 
-CutlassGemmConfig estimate_best_config_from_occupancies(const std::vector<CutlassGemmConfig>& candidate_configs,
+static CutlassGemmConfig estimate_best_config_from_occupancies(const std::vector<CutlassGemmConfig>& candidate_configs,
                                                         const std::vector<int>&               occupancies,
                                                         const int64_t                         m,
                                                         const int64_t                         n,

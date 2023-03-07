@@ -37,5 +37,5 @@ void MaxRawKernel(const Context& dev_ctx,
 PD_REGISTER_KERNEL(max_raw, KPS, ALL_LAYOUT, phi::MaxRawKernel, float) {}
 #else
 PD_REGISTER_KERNEL(
-    max_raw, KPS, ALL_LAYOUT, phi::MaxRawKernel, float, double, int, int64_t) {}
+    max_raw, KPS, ALL_LAYOUT, phi::MaxRawKernel, float, double, int, int64_t, phi::dtype::float16) {}
 #endif
