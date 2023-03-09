@@ -1303,11 +1303,16 @@ constexpr int VEC_16B = 16;
 template <typename T>
 __global__ void write_cache_k_kernel(T *cache_k,
                                      const T *k,
+                                     const int *seq_lens,
                                      const int num_head,
                                      const int dim_head,
                                      const int seq_len,
                                      const int max_seq_len) {
   const int bi = blockIdx.y;
+  if (seq_lens[bi] == 0) {
+    return;
+  }
+  
   const int hi = blockIdx.z;
   constexpr int X_ELEMS = VEC_16B / sizeof(T);
 
@@ -1341,11 +1346,16 @@ __global__ void write_cache_k_kernel(T *cache_k,
 template <typename T>
 __global__ void write_cache_v_kernel(T *cache_v,
                                      const T *v,
+                                     const int *seq_lens,
                                      const int num_head,
                                      const int dim_head,
                                      const int seq_len,
                                      const int max_seq_len) {
   const int bi = blockIdx.y;
+  if (seq_lens[bi] == 0) {
+    return;
+  }
+
   const int hi = blockIdx.z;
 
   // [bsz, num_head, seq_len, dim_head/x, x]
@@ -1371,6 +1381,7 @@ void write_cache_kv(const phi::GPUContext &dev_ctx,
                     T *cache_v,
                     const T *k,
                     const T *v,
+                    const int *seq_lens,
                     const int bsz,
                     const int num_head,
                     const int seq_len,
@@ -1394,12 +1405,31 @@ void write_cache_kv(const phi::GPUContext &dev_ctx,
   // transpose [bsz, num_head, seq_len, dim_head/x, x]->
   // [bsz, num_head, dim_head/x, max_seq_len, x]
   write_cache_k_kernel<<<grid, block_sz, 0, dev_ctx.stream()>>>(
-      cache_k, k, num_head, dim_head, seq_len, max_seq_len);
+      cache_k, k, seq_lens, num_head, dim_head, seq_len, max_seq_len);
 
   // copy [bsz, num_head, seq_len, dim_head/x, x]->
   // [bsz, num_head, max_seq_len, dim_head/x, x]
   write_cache_v_kernel<<<grid_v, block_sz, 0, dev_ctx.stream()>>>(
-      cache_v, v, num_head, dim_head, seq_len, max_seq_len);
+      cache_v, v, seq_lens, num_head, dim_head, seq_len, max_seq_len);
+}
+
+template <typename T>
+void write_cache_kv(const phi::GPUContext &dev_ctx,
+                    T *cache_k,
+                    T *cache_v,
+                    const T *k,
+                    const T *v,
+                    const int bsz,
+                    const int num_head,
+                    const int seq_len,
+                    const int max_seq_len,
+                    const int dim_head) {
+  write_cache_kv(dev_ctx, 
+                 cache_k, 
+                 cache_v, 
+                 k, v, nullptr, 
+                 bsz, num_head, seq_len, 
+                 max_seq_len, dim_head);
 }
 
 template <typename T, int VecSize, bool ComputeBias>

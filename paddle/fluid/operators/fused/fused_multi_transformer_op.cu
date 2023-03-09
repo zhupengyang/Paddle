@@ -111,6 +111,11 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
     } else {
       token_num = bsz_seq;
     }
+
+    if (token_num == 0) {
+      return;
+    }
+
     auto *padding_offset_data =
         encoder_remove_padding ? padding_offset_tensor.data<int>() : nullptr;
     // whether do weight only quant
@@ -494,6 +499,8 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
             cache_offset > 0 ? &pre_cache_kv_out : nullptr;
         phi::DenseTensor *src_mask_tmp =
             cache_offset > 0 ? &src_mask_out : nullptr;
+        const int *sequence_lengths_data =
+              encoder_remove_padding ? sequence_lengths->data<int>() : nullptr;
         qkv_bias_add_transpose_split<T>(dev_ctx,
                                         q_transpose_out_data,
                                         kv_transpose_out_data,
@@ -510,8 +517,6 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
         // kv_transpose_out_data [2， bs, head_num, seq_len, dim_head]
         if (rotary_emb_dims != 0) {
           auto *rotary_emb_data = rotary_tensor->data<T>();
-          const int *sequence_lengths_data =
-              encoder_remove_padding ? sequence_lengths->data<int>() : nullptr;
           rotary_qk(dev_ctx,
                     q_transpose_out_data,
                     kv_transpose_out_data,
@@ -591,6 +596,7 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
                           cache_v_ptr,
                           k_ptr,
                           v_ptr,
+                          sequence_lengths_data,
                           bsz,
                           num_head,
                           seq_len_tmp,
@@ -999,6 +1005,11 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
     } else {
       token_num = bsz_seq;
     }
+
+    if (token_num == 0) {
+      return;
+    }
+
     auto *padding_offset_data =
         encoder_remove_padding ? padding_offset_tensor.data<int>() : nullptr;
     // whether do weight only quant
@@ -1381,6 +1392,8 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
             cache_offset > 0 ? &pre_cache_kv_out : nullptr;
         phi::DenseTensor *src_mask_tmp =
             cache_offset > 0 ? &src_mask_out : nullptr;
+        const int *sequence_lengths_data =
+              encoder_remove_padding ? sequence_lengths->data<int>() : nullptr;
         qkv_bias_add_transpose_split<T>(dev_ctx,
                                         q_transpose_out_data,
                                         kv_transpose_out_data,
@@ -1398,8 +1411,6 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
         // kv_transpose_out_data [2， bs, head_num, seq_len, dim_head]
         if (rotary_emb_dims != 0) {
           auto *rotary_emb_data = rotary_tensor->data<T>();
-          const int *sequence_lengths_data =
-              encoder_remove_padding ? sequence_lengths->data<int>() : nullptr;
           rotary_qk(dev_ctx,
                     q_transpose_out_data,
                     kv_transpose_out_data,
@@ -1480,6 +1491,7 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
                           cache_v_ptr,
                           k_ptr,
                           v_ptr,
+                          sequence_lengths_data,
                           bsz,
                           num_head,
                           seq_len_tmp,

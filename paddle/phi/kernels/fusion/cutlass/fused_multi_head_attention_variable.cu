@@ -356,14 +356,14 @@ void DispatchFMHAIsAligned(Params params, const phi::GPUContext& ctx) {
 
 template <typename T>
 void DispatchFMHAArchTag(Params params, const phi::GPUContext& ctx) {
-  const int compute_capability = ctx.GetComputeCapability();
-  if (compute_capability == 80) {
-    DispatchFMHAIsAligned<T, cutlass::arch::Sm80>(params, ctx);
-  }  else {
-    return;
-  }
+  // const int compute_capability = ctx.GetComputeCapability();
+  // if (compute_capability == 80) {
+  //   DispatchFMHAIsAligned<T, cutlass::arch::Sm80>(params, ctx);
+  // }  else {
+  //   return;
+  // }
 
-//   LaunchMultiHeadAttentionKernel<T, cutlass::arch::Sm80, true, false, 16, 256, false, true, false>(params, ctx);
+  LaunchMultiHeadAttentionKernel<T, cutlass::arch::Sm80, true, false, 32, 128, false, true, false>(params, ctx);
 //   if (compute_capability == 80) {
 //     DispatchFMHAIsAligned<T, cutlass::arch::Sm80>(params, ctx);
 //   } else if (compute_capability == 75) {

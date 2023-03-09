@@ -587,17 +587,14 @@ class FMHARef {
     int softmax_axis = -1;
     if (src_mask_tensor != nullptr) {
       if (src_mask_out_tensor == nullptr && seq_len_ == out_seq_len) {
-        // if (std::is_same(T, float)) {
-        // LaunchFusedSoftmaxMaskKernel<T>(qk_out_data,
-        //                               src_mask_tensor->data<T>(),
-        //                               softmax_out_data,
-        //                               batch_size_,
-        //                               num_head_,
-        //                               seq_len_,
-        //                               dev_ctx_.stream());
-        // } else {
-        phi::fusion::FusedSoftmaxMaskKernel<T, phi::GPUContext>(dev_ctx_, *qk_out_tensor, *src_mask_tensor, softmax_out_tensor);
-        // }
+        LaunchFusedSoftmaxMaskKernel<T>(qk_out_data,
+                                        src_mask_tensor->data<T>(),
+                                        softmax_out_data,
+                                        batch_size_,
+                                        num_head_,
+                                        seq_len_,
+                                        dev_ctx_.stream());
+        // phi::fusion::FusedSoftmaxMaskKernel<T, phi::GPUContext>(dev_ctx_, *qk_out_tensor, *src_mask_tensor, softmax_out_tensor);
       } else {
         std::vector<const phi::DenseTensor*> ins;
         std::vector<phi::DenseTensor*> outs;
