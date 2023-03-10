@@ -1164,5 +1164,5 @@ PADDLE_DEFINE_EXPORTED_bool(use_cutlass_fmha, false, "");
  */
 PADDLE_DEFINE_EXPORTED_bool(use_cublaslt_attn_gemm, false, "");
 
-PADDLE_DEFINE_EXPORTED_int64(custom_allreduce_one_shot_threshold, 196608, "");
+PADDLE_DEFINE_EXPORTED_int64(custom_allreduce_one_shot_threshold, -1, ""); // 196608
 PADDLE_DEFINE_EXPORTED_int64(custom_allreduce_two_shot_threshold, 50331648, "");

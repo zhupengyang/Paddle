@@ -1382,7 +1382,7 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
                 max_seq_len,
                 num_head,
                 dim_head,
-                time_step->data<int>()[0],
+                src_mask->dims()[3] - 1,
                 rotary_emb_dims,
                 1. / sqrt(dim_head));
       } else if (cache_kv_out) {  // generation context stage
