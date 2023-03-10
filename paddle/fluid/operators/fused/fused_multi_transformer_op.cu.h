@@ -1309,7 +1309,7 @@ __global__ void write_cache_k_kernel(T *cache_k,
                                      const int seq_len,
                                      const int max_seq_len) {
   const int bi = blockIdx.y;
-  if (seq_lens[bi] == 0) {
+  if (seq_lens && seq_lens[bi] == 0) {
     return;
   }
   
@@ -1352,7 +1352,7 @@ __global__ void write_cache_v_kernel(T *cache_v,
                                      const int seq_len,
                                      const int max_seq_len) {
   const int bi = blockIdx.y;
-  if (seq_lens[bi] == 0) {
+  if (seq_lens && seq_lens[bi] == 0) {
     return;
   }
 
