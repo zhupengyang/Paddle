@@ -106,13 +106,6 @@ class FusedMultiTransformerOp : public framework::OperatorWithKernel {
                         paddle::platform::errors::InvalidArgument(
                             "The first dim of CacheKV must be 2, but got %d",
                             c_dim[0]));  // 2
-      PADDLE_ENFORCE_EQ(c_dim[1],
-                        x_dim[0],
-                        paddle::platform::errors::InvalidArgument(
-                            "The second dim of CacheKV must be equal with "
-                            "batch size %d, but got %d",
-                            x_dim[0],
-                            c_dim[1]));  // batch_size
       PADDLE_ENFORCE_EQ(c_dim[2],
                         trans_qkvw ? y_dim[1] : y_dim[2],
                         paddle::platform::errors::InvalidArgument(
