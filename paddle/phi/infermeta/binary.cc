@@ -1692,7 +1692,6 @@ void LogLossInferMeta(const MetaTensor& input,
 
 void TopPSamplingInferMeta(const MetaTensor& x,
                            const MetaTensor& ps,
-                           int max_dec_len,
                            MetaTensor* out,
                            MetaTensor* ids) {
   ids->set_dims(phi::make_ddim({x.dims()[0], 1}));

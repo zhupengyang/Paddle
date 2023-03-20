@@ -36,13 +36,12 @@ from ..framework import (
 __all__ = []
 
 
-def top_p_sampling(x, ps, max_dec_len, name=None):
+def top_p_sampling(x, ps, name=None):
     if in_dygraph_mode():
-        return _C_ops.top_p_sampling(x, ps, max_dec_len)
+        return _C_ops.top_p_sampling(x, ps)
 
     inputs = {"x": [x], "ps": [ps]}
     attrs = {}
-    attrs['max_dec_len'] = max_dec_len
 
     helper = LayerHelper('top_p_sampling', **locals())
     out = helper.create_variable_for_type_inference(dtype=x.dtype)

@@ -22,7 +22,6 @@ template <typename T, typename Context>
 void TopPSamplingKernel(const Context& dev_ctx,
                         const DenseTensor& x,
                         const DenseTensor& ps,
-                        int max_dec_len,
                         DenseTensor* out,
                         DenseTensor* ids);
 
