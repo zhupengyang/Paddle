@@ -231,14 +231,18 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
       InitValue(dev_ctx, kv_transpose_out_data, kv_transpose_out.numel(), static_cast<T>(0.));
     }
 
-    qk_out.Resize({{bsz, num_head, seq_len, out_seq_len}});
-    auto *qk_out_data = dev_ctx.Alloc<T>(&qk_out, qk_out.numel() * sizeof(T));
+    if (!FLAGS_use_cutlass_fmha) {
+      qk_out.Resize({{bsz, num_head, seq_len, out_seq_len}});
+      auto *qk_out_data = dev_ctx.Alloc<T>(&qk_out, qk_out.numel() * sizeof(T));
+    }
 
     phi::DenseTensor src_mask_out;
-    if (cache_offset > 0) {
-      src_mask_out.Resize({{bsz, num_head, seq_len, out_seq_len}});
-      auto *src_mask_out_data =
-          dev_ctx.Alloc<T>(&src_mask_out, src_mask_out.numel() * sizeof(T));
+    if (!FLAGS_use_cutlass_fmha) {
+      if (cache_offset > 0) {
+        src_mask_out.Resize({{bsz, num_head, seq_len, out_seq_len}});
+        auto *src_mask_out_data =
+            dev_ctx.Alloc<T>(&src_mask_out, src_mask_out.numel() * sizeof(T));
+      }
     }
 
     // [2, bs, num_head, cache_seq_len + seq_len, head_dim]
@@ -253,16 +257,14 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
     phi::DenseTensor softmax_out;
     phi::DenseTensor attn_dropout_mask_out, attn_dropout_out;
     phi::DenseTensor qktv_out, fmha_out;
-    softmax_out.Resize({{bsz, num_head, seq_len, out_seq_len}});
-    auto *softmax_out_data =
-        dev_ctx.Alloc<T>(&softmax_out, softmax_out.numel() * sizeof(T));
-
-    attn_dropout_mask_out.Resize({{bsz, num_head, seq_len, out_seq_len}});
-    auto *attn_dropout_mask_out_data = dev_ctx.Alloc<T>(
-        &attn_dropout_mask_out, attn_dropout_mask_out.numel() * sizeof(T));
-    attn_dropout_out.Resize({{bsz, num_head, seq_len, out_seq_len}});
-    auto *attn_dropout_data_data = dev_ctx.Alloc<T>(
-        &attn_dropout_out, attn_dropout_out.numel() * sizeof(T));
+    if (!FLAGS_use_cutlass_fmha) {
+      softmax_out.Resize({{bsz, num_head, seq_len, out_seq_len}});
+      auto *softmax_out_data =
+          dev_ctx.Alloc<T>(&softmax_out, softmax_out.numel() * sizeof(T));
+    }
+      
+    T *attn_dropout_mask_out_data = nullptr;
+    T *attn_dropout_data_data = nullptr;
 
     qktv_out.Resize({{bsz, num_head, seq_len, dim_head}});
     auto *qktv_out_data =
@@ -1126,14 +1128,18 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
       InitValue(dev_ctx, kv_transpose_out_data, kv_transpose_out.numel(), static_cast<T>(0.));
     }
 
-    qk_out.Resize({{bsz, num_head, seq_len, out_seq_len}});
-    auto *qk_out_data = dev_ctx.Alloc<T>(&qk_out, qk_out.numel() * sizeof(T));
+    if (!FLAGS_use_cutlass_fmha) {
+      qk_out.Resize({{bsz, num_head, seq_len, out_seq_len}});
+      auto *qk_out_data = dev_ctx.Alloc<T>(&qk_out, qk_out.numel() * sizeof(T));
+    }
 
     phi::DenseTensor src_mask_out;
-    if (cache_offset > 0) {
-      src_mask_out.Resize({{bsz, num_head, seq_len, out_seq_len}});
-      auto *src_mask_out_data =
-          dev_ctx.Alloc<T>(&src_mask_out, src_mask_out.numel() * sizeof(T));
+    if (!FLAGS_use_cutlass_fmha) {
+      if (cache_offset > 0) {
+        src_mask_out.Resize({{bsz, num_head, seq_len, out_seq_len}});
+        auto *src_mask_out_data =
+            dev_ctx.Alloc<T>(&src_mask_out, src_mask_out.numel() * sizeof(T));
+      }
     }
 
     // [2, bs, num_head, cache_seq_len + seq_len, head_dim]
@@ -1148,9 +1154,11 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
     phi::DenseTensor softmax_out;
     phi::DenseTensor attn_dropout_mask_out, attn_dropout_out;
     phi::DenseTensor qktv_out, fmha_out;
-    softmax_out.Resize({{bsz, num_head, seq_len, out_seq_len}});
-    auto *softmax_out_data =
-        dev_ctx.Alloc<T>(&softmax_out, softmax_out.numel() * sizeof(T));
+    if (!FLAGS_use_cutlass_fmha) {
+      softmax_out.Resize({{bsz, num_head, seq_len, out_seq_len}});
+      auto *softmax_out_data =
+          dev_ctx.Alloc<T>(&softmax_out, softmax_out.numel() * sizeof(T));
+    }
 
     T *attn_dropout_mask_out_data = nullptr;
     T *attn_dropout_data_data = nullptr;
