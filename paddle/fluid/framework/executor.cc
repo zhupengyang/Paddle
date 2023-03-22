@@ -184,8 +184,8 @@ void Executor::Run(const ProgramDesc& pdesc,
                    bool force_disable_gc,
                    bool keep_kid_scopes) {
   LOG_FIRST_N(INFO, 1) << "Old Executor is Running.";
-  platform::RecordEvent record_run(
-      "Executor::Run", platform::TracerEventType::UserDefined, 1);
+  // platform::RecordEvent record_run(
+  //     "Executor::Run", platform::TracerEventType::UserDefined, 1);
   platform::RecordBlock b(block_id);
   if (FLAGS_use_mkldnn) EnableMKLDNN(pdesc);
   auto ctx = Prepare(pdesc, block_id, skip_ref_cnt_vars, force_disable_gc);
@@ -330,8 +330,8 @@ void Executor::Run(const ProgramDesc& program,
                    bool create_vars,
                    const std::string& feed_holder_name,
                    const std::string& fetch_holder_name) {
-  platform::RecordEvent record_run(
-      "Executor::Run", platform::TracerEventType::UserDefined, 1);
+  // platform::RecordEvent record_run(
+  //     "Executor::Run", platform::TracerEventType::UserDefined, 1);
   platform::RecordBlock b(kProgramId);
   if (FLAGS_use_mkldnn) EnableMKLDNN(program);
 #ifdef PADDLE_WITH_MKLDNN
@@ -473,9 +473,9 @@ void Executor::RunPartialPreparedContext(ExecutorPrepareContext* ctx,
                                          bool create_local_scope,
                                          bool create_vars,
                                          bool keep_kids) {
-  platform::RecordEvent record_run("Executor::RunPartialPreparedContext",
-                                   platform::TracerEventType::UserDefined,
-                                   1);
+  // platform::RecordEvent record_run("Executor::RunPartialPreparedContext",
+  //                                  platform::TracerEventType::UserDefined,
+  //                                  1);
   platform::RecordBlock b(kProgramId);
   PADDLE_ENFORCE_NOT_NULL(
       scope, platform::errors::InvalidArgument("Scope shouldn't be null"));

@@ -1021,6 +1021,7 @@ void InterpreterCore::RunInstruction(const Instruction& instr_node) {
   auto* op = instr_node.OpBase();
   platform::RecordEvent instruction_event(
       op->Type(), platform::TracerEventType::Operator, 1);
+  // LOG(INFO)<<"new executor op: "<<op->Type();
 
   SetDeviceId(instr_node.DeviceContext().GetPlace());
 

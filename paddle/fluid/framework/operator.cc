@@ -786,6 +786,7 @@ void OperatorBase::Run(const Scope& scope, const platform::Place& place) {
           platform::TracerEventType::Operator,
           FLAGS_enable_host_event_recorder_hook ? 20 : 1,
           platform::EventRole::kUniqueOp);
+      if (Type() == "while") op_type_record_event.~RecordEvent();
       RunImpl(scope, place);
     }
 
