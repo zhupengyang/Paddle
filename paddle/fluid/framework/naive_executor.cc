@@ -73,7 +73,8 @@ void NaiveExecutor::Run() {
       }
     }
 
-    // LOG(INFO)<<"op: "<<op->Type();
+    // LOG(INFO)<<"op: "<<op->Type()<<", place:
+    // "<<platform::is_xpu_place(place_);
     op->Run(*scope_, place_);
 
     // Update the shared_holder so that only records the max one.

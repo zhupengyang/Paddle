@@ -49,6 +49,10 @@ static const std::vector<std::string> support_subgraph_passes = {
     "fuse_multi_transformer_layer_pass",
     "delete_quant_dequant_linear_op_pass",
     "delete_weight_dequant_linear_op_pass",
+};
+
+static const std::vector<std::string> xpu_support_subgraph_passes = {
+    "constant_folding_pass",
     "one_beam_size_fuse_pass",
     "fused_multi_transformer_xpu_quant_pass",
     "fc_xpu_fuse_pass",
@@ -90,9 +94,17 @@ Graph *Pass::Apply(Graph *graph) const {
   }
   graph->Get<PassRecorder>(kPassRecorder).insert(Type());
 
-  if (graph->IsMainGraph() && std::count(support_subgraph_passes.begin(),
-                                         support_subgraph_passes.end(),
-                                         Type())) {
+  bool is_xpu_support_pass = std::count(xpu_support_subgraph_passes.begin(),
+                                        xpu_support_subgraph_passes.end(),
+                                        Type()) &&
+                             Get<bool>("use_xpu");
+  bool is_other_device_support_pass =
+      std::count(support_subgraph_passes.begin(),
+                 support_subgraph_passes.end(),
+                 Type()) &&
+      !Get<bool>("use_xpu");
+  if (graph->IsMainGraph() &&
+      (is_xpu_support_pass || is_other_device_support_pass)) {
     for (size_t i = 1; i < graph->SubGraphsSize(); i++) {
       auto *sub_graph = graph->GetSubGraph(i);
       if (!sub_graph->Has(framework::ir::kParamScopeAttr)) {

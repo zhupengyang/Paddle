@@ -1299,7 +1299,7 @@ void AnalysisPredictor::PrepareArgument() {
   // processed in a single
   if (model_precision_ != phi::DataType::FLOAT32) {
     LOG(INFO) << "Model is mixed precision type with " << model_precision_
-              << ", we will use a new PassStrategy. Note that only the GPU "
+              << ", we will use a new PassStrategy. Note that only GPU/XPU "
                  "backend is supported for now.";
     if (!config_.use_cinn_compiler_) {
       const auto &deleted_passes = pass_builder->GetAllDeletedPasses();

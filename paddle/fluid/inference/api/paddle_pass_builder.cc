@@ -520,7 +520,7 @@ XpuPassStrategy::XpuPassStrategy() : PassStrategy({}) {
   passes_.assign({
       "delete_dropout_op_pass",
       "identity_scale_op_clean_pass",
-      // "constant_folding_pass",
+      "constant_folding_pass",
       "generate_sequence_xpu_fuse_pass",
       "embedding_with_eltwise_add_xpu_fuse_pass",
       "multi_encoder_xpu_fuse_pass",
