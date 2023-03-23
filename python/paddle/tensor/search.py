@@ -144,7 +144,7 @@ def argsort(x, axis=-1, descending=False, name=None):
         outputs={'Out': out, 'Indices': ids},
         attrs={'axis': axis, 'descending': descending},
     )
-    return ids
+    return out, ids
 
 
 def argmax(x, axis=None, keepdim=False, dtype="int64", name=None):

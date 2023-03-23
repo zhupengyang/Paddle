@@ -517,7 +517,6 @@ void TopPSamplingKernel(const Context& dev_ctx,
                         const DenseTensor& ps,
                         DenseTensor* out,
                         DenseTensor* ids) {
-  static int count = 0;
   auto cu_stream = dev_ctx.stream();
   const auto* input = &x;
   // get the input dims
@@ -554,10 +553,13 @@ void TopPSamplingKernel(const Context& dev_ctx,
       PD_THROW("the input data shape has error in the FillIndex kernel.");
   }
 
-  static curandState_t* dev_curand_states;
-  if (count == 0) {
-    cudaMalloc(&dev_curand_states, bs * sizeof(curandState_t));
-  }
+  curandState_t* dev_curand_states;
+  paddle::memory::AllocationPtr curand_states_buf{nullptr};
+  curand_states_buf = paddle::memory::Alloc(
+                      dev_ctx.GetPlace(),
+                      bs * sizeof(curandState_t),
+                      phi::Stream(reinterpret_cast<phi::StreamId>(dev_ctx.stream())));
+  dev_curand_states = reinterpret_cast<curandState_t*>(curand_states_buf->ptr());
   srand((unsigned int)(time(NULL)));
   setup_kernel<<<1, 256, 0, cu_stream>>>(dev_curand_states, rand(), bs);
 
@@ -586,8 +588,6 @@ void TopPSamplingKernel(const Context& dev_ctx,
     default:
       PD_THROW("the input data shape has error in the topp_beam_topk kernel.");
   }
-
-  count = 1;
 
   size_t temp_storage_bytes = 0;
 
