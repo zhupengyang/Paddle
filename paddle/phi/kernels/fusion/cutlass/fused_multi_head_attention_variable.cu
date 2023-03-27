@@ -363,7 +363,7 @@ void DispatchFMHAArchTag(Params params, const phi::GPUContext& ctx) {
   //   return;
   // }
 
-  LaunchMultiHeadAttentionKernel<T, cutlass::arch::Sm80, true, false, 32, 128, false, true, false>(params, ctx);
+  // LaunchMultiHeadAttentionKernel<T, cutlass::arch::Sm80, true, false, 32, 128, false, true, false>(params, ctx);
 //   if (compute_capability == 80) {
 //     DispatchFMHAIsAligned<T, cutlass::arch::Sm80>(params, ctx);
 //   } else if (compute_capability == 75) {
