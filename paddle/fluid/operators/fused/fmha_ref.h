@@ -368,9 +368,7 @@ class FMHARef {
     // input shape: [bs, seq_len, 3, num_head, head_dim]
     // transpose with perm [2, 0, 3, 1, 4],
     // output_shape: [3, bs, num_head, seq_len, head_dim]
-    T* qk_out_data = qk_out_tensor->data<T>();
     T* qktv_out_data = qktv_out_tensor->data<T>();
-    T* softmax_out_data = softmax_out_tensor->data<T>();
     T* fmha_out_data = fmha_out_tensor->data<T>();
 
     auto out_seq_len = seq_len_;

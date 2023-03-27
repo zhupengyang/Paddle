@@ -1140,7 +1140,7 @@
   backward : where_grad
 
 - op : top_p_sampling
-  args : (Tensor x, Tensor ps, int max_dec_len=1)
+  args : (Tensor x, Tensor ps)
   output : Tensor (out), Tensor(ids)
   infer_meta :
     func : TopPSamplingInferMeta

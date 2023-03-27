@@ -104,7 +104,7 @@ __global__ void setup_kernel(curandState_t* state,
                              const int bs) {
   int idx = blockIdx.x * blockDim.x + threadIdx.x;
   for (int i = idx; i < bs; i += gridDim.x * blockDim.x) {
-    curand_init(seed, 0, 0, &state[i]);
+    curand_init(seed + i, 0, 0, &state[i]);
   }
 }
 
@@ -515,10 +515,8 @@ template <typename T, typename Context>
 void TopPSamplingKernel(const Context& dev_ctx,
                         const DenseTensor& x,
                         const DenseTensor& ps,
-                        int max_dec_len,
                         DenseTensor* out,
                         DenseTensor* ids) {
-  static int count = 0;
   auto cu_stream = dev_ctx.stream();
   const auto* input = &x;
   // get the input dims
@@ -555,13 +553,15 @@ void TopPSamplingKernel(const Context& dev_ctx,
       PD_THROW("the input data shape has error in the FillIndex kernel.");
   }
 
-  static curandState_t* dev_curand_states;
-  if (count == 0) {
-    cudaMalloc(&dev_curand_states, bs * sizeof(curandState_t));
-    // setup_kernel<<<1, 256, 0, cu_stream>>>(dev_curand_states, 2022, bs);
-  }
+  curandState_t* dev_curand_states;
+  paddle::memory::AllocationPtr curand_states_buf{nullptr};
+  curand_states_buf = paddle::memory::Alloc(
+                      dev_ctx.GetPlace(),
+                      bs * sizeof(curandState_t),
+                      phi::Stream(reinterpret_cast<phi::StreamId>(dev_ctx.stream())));
+  dev_curand_states = reinterpret_cast<curandState_t*>(curand_states_buf->ptr());
   srand((unsigned int)(time(NULL)));
-  setup_kernel<<<1, 256, 0, cu_stream>>>(dev_curand_states, rand() % max_dec_len, bs);
+  setup_kernel<<<1, 256, 0, cu_stream>>>(dev_curand_states, rand(), bs);
 
   DenseTensor count_iter;
   count_iter.Resize(phi::make_ddim({bs + 1}));
@@ -588,11 +588,6 @@ void TopPSamplingKernel(const Context& dev_ctx,
     default:
       PD_THROW("the input data shape has error in the topp_beam_topk kernel.");
   }
-
-//   if (count % max_dec_len == max_dec_len - 1) {
-//     cudaFree(dev_curand_states);
-//   }
-  count++;
 
   size_t temp_storage_bytes = 0;
 
