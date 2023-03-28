@@ -438,25 +438,7 @@ class FMHARef {
             0,
             src_mask_tensor->dims()[3],
             qktv_out_data);
-        } else {
-          phi::fusion::cutlass_internal::MultiHeadAttentionForwardWrapper<T, phi::GPUContext>(
-            dev_ctx_,
-            q_ptr,
-            k_ptr,
-            v_ptr,
-            src_mask_tensor->data<T>(),
-            scale,
-            false, /*causal*/
-            batch_size_,
-            num_head_,
-            seq_len_,
-            out_seq_len,
-            head_dim_,
-            src_mask_tensor->dims()[3] * src_mask_tensor->dims()[2],
-            0,
-            src_mask_tensor->dims()[3],
-            qktv_out_data);
-        }
+        } 
       } else {
         phi::fusion::cutlass_internal::MultiHeadAttentionForwardWrapper<T, phi::GPUContext>(
           dev_ctx_,
