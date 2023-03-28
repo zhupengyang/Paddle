@@ -37,7 +37,7 @@ void MultiHeadAttentionForwardWrapper(const Context& ctx,
                                      T* query,
                                      T* key,
                                      T* value,
-                                     const T* mask,
+                                     phi::DenseTensor* mask,
                                      const float scale,
                                      const bool causal,
                                      const int64_t batch_size, 
@@ -45,9 +45,6 @@ void MultiHeadAttentionForwardWrapper(const Context& ctx,
                                      const int64_t seq_len, 
                                      const int64_t out_seq_len, 
                                      const int64_t head_size, 
-                                     const int64_t mask_strideB, 
-                                      const int64_t mask_strideH, 
-                                      const int64_t mask_strideM, 
                                      T* output); 
 
 } // cutlass_internal
