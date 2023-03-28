@@ -72,6 +72,7 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
     int dim_embed = input_x_dims[2];
     int bsz_seq = bsz * seq_len;
     const std::string act_method = ctx.Attr<std::string>("act_method");
+    bool use_glu = (act_method == "geglu");
     bool remove_padding = false;
     auto *sequence_lengths = ctx.Input<phi::DenseTensor>("SeqLengths");
     if (sequence_lengths) {
@@ -311,22 +312,33 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
 
     int dim_ffn = quant_weight? ffn1_weight_dim[0]: ffn1_weight_dim[1];
 
+    FFNGluHelper<T> ffn1_glu_helper(
+        dev_ctx, act_method, token_num, dim_ffn / 2, dim_ffn, dim_embed);
     auto ffn1_cublas_linear = CublasFusedMLP<T>(dev_ctx);
     const phi::DDim ffn1_input_shape({token_num, dim_embed});
     ffn1_cublas_linear.Setup(ffn1_input_shape, ffn1_weight_dim, false, false);
 
-    phi::DenseTensor ffn1_out;
-    ffn1_out.Resize({{token_num, dim_ffn}});
+    phi::DenseTensor ffn1_out, ffn1_tmp_out;
+    if (use_glu) {
+      ffn1_tmp_out.Resize({{token_num, dim_ffn}});
+      auto *ffn1_tmp_out_data =
+          dev_ctx.Alloc<T>(&ffn1_tmp_out, ffn1_tmp_out.numel() * sizeof(T));
+      ffn1_out.Resize({{token_num, dim_ffn / 2}});
+    } else {
+      ffn1_out.Resize({{token_num, dim_ffn}});
+    }
     auto *ffn1_out_data =
         dev_ctx.Alloc<T>(&ffn1_out, ffn1_out.numel() * sizeof(T));
 
     // 7. ffn2 matmul + bias + residual.
+    int tmp_dim_ffn = dim_ffn;
+    if (use_glu) tmp_dim_ffn /= 2;
     auto ffn2_weights = ctx.MultiInput<phi::DenseTensor>("FFN2Weight");
     auto ffn2_weights_scales = ctx.MultiInput<phi::DenseTensor>("FFN2WeightScale");
     auto ffn2_biases = ctx.MultiInput<phi::DenseTensor>("FFN2Bias");
 
     auto ffn2_linear_compute = AttnMatMul<T>(
-        dev_ctx, false, false, token_num, dim_embed, dim_ffn, false);
+        dev_ctx, false, false, token_num, dim_embed, tmp_dim_ffn, false);
 
     // auto ffn2_linear_compute = AttnMatMulV2<T>(
     //     dev_ctx, false, false, token_num, dim_embed, dim_ffn, false);
@@ -796,12 +808,17 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
           dev_ctx.stream()
         );
       } else {
-        ffn1_cublas_linear.ComputeForward(buf1,
-                                          ffn1_weights[i],
-                                          ffn1_biases[i],
-                                          nullptr,
-                                          &ffn1_out,
-                                          act_method);
+        if (use_glu) {
+          ffn1_glu_helper.Compute(
+              buf1, ffn1_weights[i], ffn1_biases[i], &ffn1_tmp_out, &ffn1_out);
+        } else {
+          ffn1_cublas_linear.ComputeForward(buf1,
+                                            ffn1_weights[i],
+                                            ffn1_biases[i],
+                                            nullptr,
+                                            &ffn1_out,
+                                            act_method);
+        }
       }
 
 #ifdef _DEBUG_FUSED_MULTI_TRANSFORMER
@@ -967,6 +984,7 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
     int dim_embed = input_x_dims[2];
     int bsz_seq = bsz * seq_len;
     const std::string act_method = ctx.Attr<std::string>("act_method");
+    bool use_glu = (act_method == "geglu");
     bool remove_padding = false;
     auto *sequence_lengths = ctx.Input<phi::DenseTensor>("SeqLengths");
     if (sequence_lengths) {
@@ -1204,6 +1222,8 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
     // if quant weight,
     // matmul weight is transposed
     int dim_ffn = quant_weight? ffn1_weight_dim[0]: ffn1_weight_dim[1];
+    FFNGluHelper<T> ffn1_glu_helper(
+        dev_ctx, act_method, token_num, dim_ffn / 2, dim_ffn, dim_embed);
     auto ffn1_linear_compute = AttnMatMul<T>(
         dev_ctx, false, false, token_num, dim_ffn, dim_embed, false);
     phi::DenseTensor ffn1_out;
@@ -1216,17 +1236,19 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
     FusedDropoutHelper<T, int8_t> fused_act_dropout_helper(
         dev_ctx, token_num, dim_ffn, ffn1_dropout_param);
     phi::DenseTensor ffn1_dropout_out, ffn1_dropout_mask;
-    ffn1_dropout_out.Resize({{token_num, dim_ffn}});
+    int tmp_dim_ffn = dim_ffn;
+    if (use_glu) tmp_dim_ffn /= 2;
+    int8_t *ffn1_dropout_mask_data = nullptr;
+    ffn1_dropout_out.Resize({{token_num, tmp_dim_ffn}});
     auto *ffn1_dropout_out_data = dev_ctx.Alloc<T>(
         &ffn1_dropout_out, ffn1_dropout_out.numel() * sizeof(T));
-    int8_t *ffn1_dropout_mask_data = nullptr;
 
     // 8. ffn2 matmul
     auto ffn2_weights = ctx.MultiInput<phi::DenseTensor>("FFN2Weight");
     auto ffn2_weights_scales = ctx.MultiInput<phi::DenseTensor>("FFN2WeightScale");
     auto ffn2_biases = ctx.MultiInput<phi::DenseTensor>("FFN2Bias");
     auto ffn2_linear_compute = AttnMatMul<T>(
-        dev_ctx, false, false, token_num, dim_embed, dim_ffn, false);
+        dev_ctx, false, false, token_num, dim_embed, tmp_dim_ffn, false);
 
     // 9. ffn2 residual bias
     DropoutParam ffn2_dropout_param(true, 0, true, true, 0.0, nullptr, 0);
@@ -1696,9 +1718,16 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
           dev_ctx.stream()
         );
       } else {
-    
-      ffn1_linear_compute.ComputeForward(
-          ffn1_weights[i], buf1, nullptr, &ffn1_out, nullptr);
+        if (use_glu) {
+          ffn1_glu_helper.Compute(buf1,
+                                  ffn1_weights[i],
+                                  ffn1_biases[i],
+                                  &ffn1_out,
+                                  &ffn1_dropout_out);
+        } else {
+          ffn1_linear_compute.ComputeForward(
+            ffn1_weights[i], buf1, nullptr, &ffn1_out, nullptr);
+        }
       }
 #ifdef _DEBUG_FUSED_MULTI_TRANSFORMER
       VLOG(0) << "step6";
@@ -1706,7 +1735,7 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
 
       // step7. act bias
       // TODO(wangxi): remove dropout mask in inference
-      if(!quant_weight){
+      if(!quant_weight && !use_glu){
         fused_act_dropout_helper.DropoutActBias(dev_ctx,
                                                 ffn1_out_data,
                                                 ffn1_biases[i]->data<T>(),

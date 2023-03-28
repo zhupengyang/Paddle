@@ -21,7 +21,6 @@ from op_test import OpTest
 import paddle
 import paddle.nn.functional as F
 from paddle import tensor
-from paddle.fluid import layers
 from paddle.fluid.framework import default_main_program
 from paddle.incubate.nn import FusedMultiTransformer
 from paddle.incubate.nn.functional import fused_multi_transformer
@@ -55,7 +54,7 @@ class TestFusedMultiTransformerOp(OpTest):
         self.__class__.no_need_check_grad = False
 
         bias_attr = paddle.fluid.ParamAttr(
-            initializer=paddle.fluid.initializer.Constant(value=0.0005)
+            initializer=paddle.paddle.nn.initializer.Constant(value=0.0005)
         )
         self.q_proj = Linear(
             self.embed_dim,
@@ -84,18 +83,32 @@ class TestFusedMultiTransformerOp(OpTest):
             bias_attr=self.bias_attr,
         )
 
-        self.ffn1_proj = Linear(
-            self.embed_dim,
-            4 * self.embed_dim,
-            self.weight_attr,
-            bias_attr=self.bias_attr,
-        )
-        self.ffn2_proj = Linear(
-            4 * self.embed_dim,
-            self.embed_dim,
-            self.weight_attr,
-            bias_attr=self.bias_attr,
-        )
+        if self.use_geglu:
+            self.ffn1_proj = Linear(
+                self.embed_dim,
+                8 * self.embed_dim,
+                self.weight_attr,
+                bias_attr=self.bias_attr,
+            )
+            self.ffn2_proj = Linear(
+                4 * self.embed_dim,
+                self.embed_dim,
+                self.weight_attr,
+                bias_attr=self.bias_attr,
+            )
+        else:
+            self.ffn1_proj = Linear(
+                self.embed_dim,
+                4 * self.embed_dim,
+                self.weight_attr,
+                bias_attr=self.bias_attr,
+            )
+            self.ffn2_proj = Linear(
+                4 * self.embed_dim,
+                self.embed_dim,
+                self.weight_attr,
+                bias_attr=self.bias_attr,
+            )
 
         paddle.set_default_dtype(np.float32)
         self.norm = LayerNorm(self.embed_dim)
@@ -103,7 +116,10 @@ class TestFusedMultiTransformerOp(OpTest):
 
         paddle.set_default_dtype(self.x_type)
         self.dropout = Dropout(self.dropout_prob, mode="upscale_in_train")
-        self.activation = getattr(F, self.act_method)
+        if self.act_method == "geglu":
+            self.activation = F.gelu
+        else:
+            self.activation = getattr(F, self.act_method)
 
     def config(self):
         # for debug
@@ -111,7 +127,7 @@ class TestFusedMultiTransformerOp(OpTest):
 
         self.x_type = np.float32
         self.attn_mask_type = np.float64
-        # self.attn_mask_type = np.bool
+        # self.attn_mask_type = np.bool_
         self.pre_layer_norm = True
         self.has_attn_mask = True
 
@@ -124,6 +140,7 @@ class TestFusedMultiTransformerOp(OpTest):
         self.has_pre_cache = False
         self.rotary_embs = None
         self.rotary_emb_dims = 0
+        self.use_geglu = False
 
         self.remove_padding = False
 
@@ -416,8 +433,12 @@ class TestFusedMultiTransformerOp(OpTest):
             if self.pre_layer_norm:
                 ffn_ln_out = self.ffn_norm(attn_out)
 
-            ffn1_out = self.ffn1_proj(ffn_ln_out)
-            ffn1_out = self.dropout(self.activation(ffn1_out))
+            if self.use_geglu:
+                h0, h1 = self.ffn1_proj(ffn_ln_out).chunk(2, axis=-1)
+                ffn1_out = self.dropout(self.activation(h0) * h1)
+            else:
+                ffn1_out = self.ffn1_proj(ffn_ln_out)
+                ffn1_out = self.dropout(self.activation(ffn1_out))
             ffn2_out = self.ffn2_proj(ffn1_out)
 
             residual_out = attn_out + self.dropout(ffn2_out)
@@ -549,8 +570,12 @@ class TestFusedMultiTransformerOp(OpTest):
                 if self.pre_layer_norm:
                     ffn_ln_out = self.ffn_norm(attn_out)
 
-                ffn1_out = self.ffn1_proj(ffn_ln_out)
-                ffn1_out = self.dropout(self.activation(ffn1_out))
+                if self.use_geglu:
+                    h0, h1 = self.ffn1_proj(ffn_ln_out).chunk(2, axis=-1)
+                    ffn1_out = self.dropout(self.activation(h0) * h1)
+                else:
+                    ffn1_out = self.ffn1_proj(ffn_ln_out)
+                    ffn1_out = self.dropout(self.activation(ffn1_out))
                 ffn2_out = self.ffn2_proj(ffn1_out)
 
                 residual_out = attn_out + self.dropout(ffn2_out)
@@ -798,7 +823,7 @@ class TestFusedMultiTransformerOp(OpTest):
 
     def GetFusedMultiTransformerOutStatic(self):
         paddle.enable_static()
-        x = paddle.fluid.data('x', self.query.shape, self.query.dtype)
+        x = paddle.static.data('x', self.query.shape, self.query.dtype)
         cache_kvs, cache_kv = None, None
         cache_kvs_feed = None
         time_step = None
@@ -810,7 +835,7 @@ class TestFusedMultiTransformerOp(OpTest):
         rotary_embs = None
 
         if self.rotary_emb_dims > 0:
-            rotary_embs = paddle.fluid.data(
+            rotary_embs = paddle.static.data(
                 'rotary_embs', self.rotary_embs.shape, self.rotary_embs.dtype
             )
 
@@ -862,13 +887,13 @@ class TestFusedMultiTransformerOp(OpTest):
                 assert self.query_length == self.cache_length
                 cache_kv[:] = 0
             else:
-                time_step = layers.fill_constant(
+                time_step = paddle.tensor.fill_constant(
                     shape=[1], dtype="int32", value=0, force_cpu=True
                 )
                 time_step_feed = self.cache_length
 
         if self.remove_padding:
-            seq_lens = paddle.fluid.data(
+            seq_lens = paddle.static.data(
                 'seq_lens', self.seq_lens.shape, self.seq_lens.dtype
             )
             seq_lens_feed = self.seq_lens
@@ -947,7 +972,7 @@ class TestFusedMultiTransformerOp(OpTest):
         for i in range(self.layers):
             if self.has_cache_kv:
                 cache_kvs.append(
-                    layers.fill_constant(
+                    paddle.tensor.fill_constant(
                         shape=cache_kv.shape, dtype=cache_kv.dtype, value=0
                     )
                 )
@@ -955,13 +980,13 @@ class TestFusedMultiTransformerOp(OpTest):
 
             if self.has_pre_cache:
                 cache_kvs.append(
-                    layers.fill_constant(
+                    paddle.tensor.fill_constant(
                         shape=cache_kv.shape, dtype=cache_kv.dtype, value=0
                     )
                 )
                 cache_kvs_feed.append(cache_kv)
                 pre_caches.append(
-                    layers.fill_constant(
+                    paddle.tensor.fill_constant(
                         shape=self.pre_cache_kv.shape,
                         dtype=self.pre_cache_kv.dtype,
                         value=0,
@@ -1129,6 +1154,15 @@ class TestFusedMultiTransformerOpRotaryFP16(TestFusedMultiTransformerOp):
         self.rotary_emb_dims = 1
 
 
+class TestFusedMultiTransformerOpRotaryFP16GeGlu(TestFusedMultiTransformerOp):
+    def config(self):
+        super().config()
+        self.x_type = np.float16
+        self.rotary_emb_dims = 1
+        self.act_method = "geglu"
+        self.use_geglu = True
+
+
 class TestFusedMultiTransformerOpGenRotaryFP16(TestFusedMultiTransformerOp):
     def config(self):
         super().config()
@@ -1141,6 +1175,24 @@ class TestFusedMultiTransformerOpGenRotaryFP16(TestFusedMultiTransformerOp):
             self.query_length,
         )
         self.rotary_emb_dims = 2
+
+
+class TestFusedMultiTransformerOpGenRotaryFP16GeGlu(
+    TestFusedMultiTransformerOp
+):
+    def config(self):
+        super().config()
+        self.x_type = np.float16
+        self.has_cache_kv = True
+        self.gen_cache_kv = False
+        self.query_length = 1
+        self.key_length, self.value_length = (
+            self.query_length,
+            self.query_length,
+        )
+        self.rotary_emb_dims = 2
+        self.act_method = "geglu"
+        self.use_geglu = True
 
 
 class TestFusedMultiTransformerOpGenCacheRotaryFP16(
@@ -1167,6 +1219,15 @@ class TestFusedMultiTransformerOpActReluFp16(TestFusedMultiTransformerOp):
         self.x_type = np.float16
         self.act_method = "relu"
         self.layers = 3  # odd layers
+
+
+class TestFusedMultiTransformerOpActReluFp16ReGlu(TestFusedMultiTransformerOp):
+    def config(self):
+        super().config()
+        self.x_type = np.float16
+        self.layers = 3  # odd layers
+        self.act_method = "geglu"
+        self.use_geglu = True
 
 
 class TestFusedMultiTransformerOpCacheKV(TestFusedMultiTransformerOp):
@@ -1370,16 +1431,16 @@ class TestFusedMultiTransformerOpPreCacheStatic1(TestFusedMultiTransformerOp):
         self.has_attn_mask = False
         self.x_type = np.float32
         self.weight_attr = paddle.ParamAttr(
-            initializer=paddle.fluid.initializer.Constant(0.0)
+            initializer=paddle.paddle.nn.initializer.Constant(0.0)
         )
         self.bias_attr = paddle.ParamAttr(
-            initializer=paddle.fluid.initializer.Constant(0.0005)
+            initializer=paddle.paddle.nn.initializer.Constant(0.0005)
         )
         self.ln_w_attr = paddle.ParamAttr(
-            initializer=paddle.fluid.initializer.Constant(1.0)
+            initializer=paddle.paddle.nn.initializer.Constant(1.0)
         )
         self.ln_b_attr = paddle.ParamAttr(
-            initializer=paddle.fluid.initializer.Constant(0.0)
+            initializer=paddle.paddle.nn.initializer.Constant(0.0)
         )
 
     def test_fused_multi_transformer_op(self):
