@@ -1168,18 +1168,17 @@ inline size_t smem_size_in_bytes(
   return max(softmax_sz, red_sz);
 }
 
-#define MMHA_LAUNCH_KERNEL(                                              \
-    T, Dh, Dh_MAX, THDS_PER_KEY, THDS_PER_VALUE, THDS_PER_BLOCK, stream) \
-  size_t smem_sz =                                                       \
-      smem_size_in_bytes<T>(params, Dh, THDS_PER_VALUE, THDS_PER_BLOCK); \
-  dim3 grid(params.num_head, params.batch_size);                         \
-  masked_multihead_attention_kernel<T,                                   \
-                                    Dh,                                  \
-                                    Dh_MAX,                              \
-                                    THDS_PER_KEY,                        \
-                                    THDS_PER_VALUE,                      \
-                                    THDS_PER_BLOCK>                      \
-      <<<grid, THDS_PER_BLOCK, smem_sz, stream>>>(params)
+#define MMHA_LAUNCH_KERNEL(                                                                                                  \
+    T, Dh, Dh_MAX, THDS_PER_KEY, THDS_PER_VALUE, THDS_PER_BLOCK, stream)                                                     \
+  size_t smem_sz =                                                                                                           \
+      smem_size_in_bytes<T>(params, Dh, THDS_PER_VALUE, THDS_PER_BLOCK);                                                     \
+  constexpr auto kernel_fn = masked_multihead_attention_kernel<T, Dh, Dh_MAX, THDS_PER_KEY, THDS_PER_VALUE, THDS_PER_BLOCK>; \
+  if (smem_sz > 0xc000) {                                                                                                    \
+    cudaFuncSetAttribute(                                                                                                    \
+        kernel_fn, cudaFuncAttributeMaxDynamicSharedMemorySize, smem_sz);                                                    \
+  }                                                                                                                          \
+  dim3 grid(params.num_head, params.batch_size);                                                                             \
+  kernel_fn<<<grid, THDS_PER_BLOCK, smem_sz, stream>>>(params)
 
 template <typename T, int Dh, int Dh_MAX>
 void fmha_launch_kernel(const Masked_multihead_attention_params<T> &params,
@@ -1794,6 +1793,99 @@ void InitValue(const phi::GPUContext &dev_ctx,
   InitOutValueKernel<T, PackSize><<<grid_size, blocksize, 0, dev_ctx.stream()>>>(
       output_data, numel, init_value);
 }
+
+template <typename T, typename Functor, int VecSize>
+__global__ void ActFFNGlu(const T *input,
+                          T *output,
+                          Functor act_functor,
+                          const int token_num,
+                          const int hid_dim) {
+  int bi = blockIdx.x;
+  const T *input_this_thread = input + bi * hid_dim * 2;
+  T *output_this_thread = output + bi * hid_dim;
+  using LoadT = phi::AlignedVector<T, VecSize>;
+  LoadT src_vec1;
+  LoadT src_vec2;
+  for (int i = threadIdx.x * VecSize; i < hid_dim; i += blockDim.x * VecSize) {
+    phi::Load<T, VecSize>(&input_this_thread[i], &src_vec1);
+    phi::Load<T, VecSize>(&input_this_thread[i + hid_dim], &src_vec2);
+#pragma unroll
+    for (int j = 0; j < VecSize; j++) {
+      src_vec1[j] = act_functor(src_vec1[j]);
+      src_vec1[j] *= src_vec2[j];
+    }
+    phi::Store<T, VecSize>(src_vec1, &output_this_thread[i]);
+  }
+}
+
+template <typename T>
+class FFNGluHelper {
+ public:
+  FFNGluHelper(const phi::GPUContext &dev_ctx,
+               const std::string &act_method,
+               int token_num,
+               int hid_dim,
+               int dim_ffn,
+               int dim_embed)
+      : dev_ctx_(dev_ctx),
+        act_method_(act_method),
+        token_num_(token_num),
+        hid_dim_(hid_dim),
+        dim_ffn_(dim_ffn),
+        dim_embed_(dim_embed) {}
+
+  // dst = act(fc(src[0]) + bias) * src[1]
+  void Compute(const phi::DenseTensor *input,
+               const phi::DenseTensor *weight,
+               const phi::DenseTensor *bias,
+               phi::DenseTensor *bias_out,
+               phi::DenseTensor *output) {
+    // input's shape [token_num, dim_ffn], bias' shape [dim_ffn]
+    // output's shape [token_num, hid_dim], bias_out's shape [token_num,
+    // dim_ffn]
+    auto ffn_linear_compute = AttnMatMul<T>(
+        dev_ctx_, false, false, token_num_, dim_ffn_, dim_embed_, true);
+    ffn_linear_compute.ComputeForward(weight, input, bias, bias_out, bias_out);
+
+    using Functor = GeluFunctor<T>;
+
+    Functor functor;
+    constexpr int VecSize = 16;
+    constexpr int PackSize = VecSize / sizeof(T);
+    int grid_size = token_num_;
+    int block_size = 256;
+    switch (hid_dim_ % PackSize) {
+      case 0:
+        block_size = min(hid_dim_ / PackSize, 256);
+        ActFFNGlu<T, Functor, PackSize>
+            <<<grid_size, block_size, 0, dev_ctx_.stream()>>>(
+                bias_out->data<T>(),
+                output->data<T>(),
+                functor,
+                token_num_,
+                hid_dim_);
+        break;
+      default:
+        block_size = min(hid_dim_, 256);
+        ActFFNGlu<T, Functor, 1>
+            <<<grid_size, block_size, 0, dev_ctx_.stream()>>>(
+                bias_out->data<T>(),
+                output->data<T>(),
+                functor,
+                token_num_,
+                hid_dim_);
+        break;
+    }
+  }
+
+ private:
+  const phi::GPUContext &dev_ctx_;
+  std::string act_method_;
+  int token_num_;
+  int hid_dim_;
+  int dim_ffn_;
+  int dim_embed_;
+};
 
 }  // namespace
 
