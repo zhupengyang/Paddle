@@ -346,7 +346,7 @@ void MultiHeadAttentionForwardWrapper(const Context& ctx,
                                      T* query,
                                      T* key,
                                      T* value,
-                                     const T* mask,
+                                     phi::DenseTensor* mask_tensor, 
                                      const float scale,
                                      const bool causal,
                                      const int64_t batch_size, 
@@ -354,9 +354,6 @@ void MultiHeadAttentionForwardWrapper(const Context& ctx,
                                      const int64_t seq_len, 
                                      const int64_t out_seq_len, 
                                      const int64_t head_size, 
-                                     const int64_t mask_strideB, 
-                                      const int64_t mask_strideH, 
-                                      const int64_t mask_strideM, 
                                      T* output) {
   LaunchParams params{};
 
@@ -386,11 +383,20 @@ void MultiHeadAttentionForwardWrapper(const Context& ctx,
   params.key_strideM = head_size;
   params.value_strideM = head_size;
 
-  params.mask_broadcast_row = false;
-  params.mask_ptr = mask; 
-  params.mask_strideB = mask_strideB; 
-  params.mask_strideH = mask_strideH; 
-  params.mask_strideM = mask_strideM; 
+  if(mask_tensor != nullptr){
+    params.mask_broadcast_row = false;
+    params.mask_ptr = mask_tensor->data<T>(); 
+    params.mask_strideB = mask_tensor->dims()[3] * mask_tensor->dims()[2]; 
+    params.mask_strideH = 0; // Since head dim is broadcast.  
+    params.mask_strideM = mask_tensor->dims()[3]; 
+  } else {
+    params.mask_broadcast_row = false;
+    params.mask_ptr = nullptr; 
+    params.mask_strideB = 0; 
+    params.mask_strideH = 0; 
+    params.mask_strideM = 0; 
+  }
+  
   DispatchFusedMultiheadAttentionKernel(params, ctx);
 }
 
@@ -458,7 +464,7 @@ template void MultiHeadAttentionForwardWrapper(const phi::GPUContext& ctx,
                                      phi::dtype::float16* query,
                                      phi::dtype::float16* key,
                                      phi::dtype::float16* value,
-                                     const phi::dtype::float16* mask,
+                                     phi::DenseTensor* mask,
                                      const float scale,
                                      const bool causal,
                                      const int64_t batch_size, 
@@ -466,16 +472,13 @@ template void MultiHeadAttentionForwardWrapper(const phi::GPUContext& ctx,
                                      const int64_t seq_len, 
                                      const int64_t out_seq_len, 
                                      const int64_t head_size, 
-                                     const int64_t mask_strideB, 
-                                      const int64_t mask_strideH, 
-                                      const int64_t mask_strideM, 
                                      phi::dtype::float16* output); 
 
 template void MultiHeadAttentionForwardWrapper(const phi::GPUContext& ctx,
                                       float* query,
                                       float* key,
                                       float* value,
-                                      const float* mask,
+                                      phi::DenseTensor* mask,
                                       const float scale,
                                       const bool causal,
                                       const int64_t batch_size, 
@@ -483,9 +486,6 @@ template void MultiHeadAttentionForwardWrapper(const phi::GPUContext& ctx,
                                       const int64_t seq_len, 
                                       const int64_t out_seq_len, 
                                       const int64_t head_size, 
-                                      const int64_t mask_strideB, 
-                                      const int64_t mask_strideH, 
-                                      const int64_t mask_strideM, 
                                       float* output); 
 }  // namespace cutlass_internal
 }  // namespace fusion
