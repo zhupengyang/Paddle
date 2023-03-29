@@ -434,7 +434,6 @@ class FMHARef {
         out_seq_len,
         head_dim_,
         qktv_out_data);
-      }
     }
 
     // transpose: [0, 2, 1, 3]
