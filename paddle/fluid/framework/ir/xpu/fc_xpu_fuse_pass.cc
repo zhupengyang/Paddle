@@ -285,6 +285,8 @@ int FcXPUFusePass::ApplyImpl(ir::Graph* graph,
             "act_alpha", PADDLE_GET_CONST(float, act->Op()->GetAttr("slope")));
       }
     }
+    fc_xpu_op_desc.SetAttr("kernel_dtype", 5);
+    fc_xpu_op_desc.SetAttr("out_dtype", 1);
     fc_xpu_op_desc.SetOutput("out", {fc_out_name});
     fc_xpu_op_desc.SetOutput("out_max", {fc_out_max_name});
     auto* fc_xpu = graph->CreateOpNode(&fc_xpu_op_desc);

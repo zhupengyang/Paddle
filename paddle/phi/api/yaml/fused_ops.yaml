@@ -5,14 +5,14 @@
 # otherwise the operator only could be used in static mode.
 
 - op : conv2d_xpu
-  args : (Tensor input, Tensor input_max, Tensor filter, Tensor filter_max, Tensor bias, Tensor branch, int[] paddings, int[] dilations, int[] strides, str padding_algorithm, int groups, bool has_bias, bool has_branch, int act_type, float act_param)
-  output : Tensor(output), Tensor(output_max)
+  args : (Tensor x, Tensor x_max, Tensor w, Tensor w_max, Tensor w_one_value, Tensor bias, Tensor branch, Tensor branch_max, int[] paddings, int[] dilations, int[] strides, str padding_algorithm, int groups, int act_type, float act_param, DataType kernel_dtype, DataType out_dtype)
+  output : Tensor(out), Tensor(out_max)
   infer_meta :
     func : Conv2dXPUInferMeta
   kernel :
     func : conv2d_xpu
-    data_type : input
-  optional : bias, branch, input_max
+    data_type : kernel_dtype
+  optional : x_max, w_one_value, bias, branch, branch_max
 
 - op : embedding_with_eltwise_add_xpu
   args : (Tensor[] ids, Tensor[] tables, int64_t padding_idx)
@@ -24,13 +24,13 @@
     data_type: tables
 
 - op : fc_xpu
-  args : (Tensor x, Tensor x_max, Tensor w, Tensor w_max, Tensor bias, int in_num_col_dims, bool transpose_x, float alpha, float beta, int act_type, float act_alpha)
+  args : (Tensor x, Tensor x_max, Tensor w, Tensor w_max, Tensor bias, int in_num_col_dims, bool transpose_x, float alpha, float beta, int act_type, float act_alpha, DataType kernel_dtype, DataType out_dtype)
   output : Tensor(out), Tensor(out_max)
   infer_meta :
     func : FcXPUInferMeta
   kernel :
     func : fc_xpu
-    data_type : x
+    data_type : kernel_dtype
   optional : bias, x_max
 
 - op : fused_dropout_add

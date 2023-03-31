@@ -51,9 +51,14 @@ int ConvertActivationType(std::string act_type);
 
 Node* FindNodeWithName(Graph* graph, std::string name);
 
+std::vector<float> GetMaxAttr(OpDesc* op_desc, const std::string& var_name);
+
 template <typename T>
 size_t HashTensor(const phi::DenseTensor& in);
 
+std::string GetPrefixWithoutHash(const std::string& name);
+
+// float32/float16 -> int16
 template <typename T>
 void PrepareWeight(Graph* graph,
                    Scope* scope,
@@ -63,6 +68,7 @@ void PrepareWeight(Graph* graph,
                    Node** dst_max,
                    bool transpose);
 
+// float32/float16 -> float32
 void PrepareBias(
     Graph* graph, Scope* scope, BlockDesc* block, Node* src, Node** dst);
 

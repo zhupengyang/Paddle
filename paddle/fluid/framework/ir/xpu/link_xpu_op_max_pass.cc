@@ -121,7 +121,9 @@ void LinkXPUOpMaxPass::ApplyImpl(ir::Graph* graph,
     GET_IR_NODE(out_max);
     for (auto next_op : out->outputs) {
       auto* next_op_desc = next_op->Op();
-      if (op_types_.count(next_op_desc->Type()) == 0) continue;
+      if (op_types_.count(next_op_desc->Type()) == 0 ||
+          next_op_desc->HasInput("x_max"))
+        continue;
       next_op_desc->SetInput("x_max", {out_max->Name()});
       IR_NODE_LINK_TO(out_max, next_op);
       found_subgraph_count++;

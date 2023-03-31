@@ -31,6 +31,8 @@ void FcXPUKernel(const Context& ctx,
                  float beta,
                  int act_type,
                  float act_alpha,
+                 DataType kernel_dtype,
+                 DataType out_dtype,
                  DenseTensor* out,
                  DenseTensor* out_max) {
   using XPUType = typename XPUTypeTrait<T>::Type;

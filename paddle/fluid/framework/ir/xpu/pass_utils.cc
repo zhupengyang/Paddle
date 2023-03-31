@@ -71,6 +71,29 @@ Node* FindNodeWithName(Graph* graph, std::string name) {
   return nullptr;
 }
 
+std::vector<float> GetMaxAttr(OpDesc* op_desc, const std::string& var_name) {
+  std::vector<float> max_attr;
+  auto inputs = op_desc->Inputs();
+  for (auto input : inputs) {
+    auto arg_name = input.first;
+    auto var_names = input.second;
+    if (std::count(var_names.begin(), var_names.end(), var_name) > 0) {
+      max_attr =
+          op_desc->GetAttrIfExists<std::vector<float>>(arg_name + "_max");
+    }
+  }
+  auto outputs = op_desc->Outputs();
+  for (auto output : outputs) {
+    auto arg_name = output.first;
+    auto var_names = output.second;
+    if (std::count(var_names.begin(), var_names.end(), var_name) > 0) {
+      max_attr =
+          op_desc->GetAttrIfExists<std::vector<float>>(arg_name + "_max");
+    }
+  }
+  return max_attr;
+}
+
 template <typename T>
 std::string IntTypeToString() {
   LOG(FATAL) << "Not support type.";

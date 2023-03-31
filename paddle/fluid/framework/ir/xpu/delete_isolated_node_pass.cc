@@ -115,6 +115,13 @@ void DeleteIsolatedNodePass::CollectReservedPersistableNodeNames(
         break;
       }
     }
+    for (auto* in_node : node->inputs) {
+      auto op_type = in_node->Op()->Type();
+      if (control_flow_op_input_map_.count(op_type) == 0) {
+        reserved_persistable_node_names->insert(node->Var()->Name());
+        break;
+      }
+    }
   }
 }
 

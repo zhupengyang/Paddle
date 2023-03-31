@@ -19,6 +19,7 @@
 #include "paddle/fluid/framework/ir/xpu/pass_utils.h"
 #include "paddle/fluid/framework/ir/xpu/quant_utils.h"
 #include "paddle/fluid/framework/op_version_registry.h"
+#include "paddle/fluid/platform/device_context.h"
 #include "paddle/fluid/platform/enforce.h"
 
 namespace phi {
@@ -41,10 +42,9 @@ struct Conv2dXPUPattern : public PatternBase {
                    const std::string& name_scope,
                    const std::string& conv_type,
                    const std::string& act_type,
-                   bool with_conv_bias,
+                   bool with_bias,
                    bool with_bn,
-                   bool with_branch_x,
-                   bool with_branch_y);
+                   bool with_branch);
   // declare operator node's name
   PATTERN_DECL_NODE(conv);
   PATTERN_DECL_NODE(ew_bias_add);
@@ -73,29 +73,24 @@ struct Conv2dXPUPattern : public PatternBase {
  private:
   std::string conv_type_;
   std::string act_type_;
-  bool with_conv_bias_{false};
+  bool with_bias_{false};
   bool with_bn_{false};
   bool with_branch_{false};
-  bool with_branch_x_{false};
-  bool with_branch_y_{false};
 };
 
 Conv2dXPUPattern::Conv2dXPUPattern(PDPattern* pattern,
                                    const std::string& name_scope,
                                    const std::string& conv_type,
                                    const std::string& act_type,
-                                   bool with_conv_bias,
+                                   bool with_bias,
                                    bool with_bn,
-                                   bool with_branch_x,
-                                   bool with_branch_y)
+                                   bool with_branch)
     : PatternBase(pattern, name_scope, name_scope),
       conv_type_(conv_type),
       act_type_(act_type),
-      with_conv_bias_(with_conv_bias),
+      with_bias_(with_bias),
       with_bn_(with_bn),
-      with_branch_(with_branch_x || with_branch_y),
-      with_branch_x_(with_branch_x),
-      with_branch_y_(with_branch_y) {
+      with_branch_(with_branch) {
   auto conv = pattern->NewNode(conv_repr())->assert_is_op(conv_type_);
   auto input = pattern->NewNode(input_repr())
                    ->assert_is_op_input(conv_type_, "Input")
@@ -111,7 +106,7 @@ Conv2dXPUPattern::Conv2dXPUPattern(PDPattern* pattern,
   PDNode* ew_bias_add = nullptr;
   PDNode* ew_bias_add_y = nullptr;
   PDNode* ew_bias_add_out = nullptr;
-  if (with_conv_bias_) {
+  if (with_bias_) {
     conv_out->assert_is_op_input("elementwise_add", "X");
     ew_bias_add_y = pattern->NewNode(ew_bias_add_y_repr())
                         ->assert_is_op_input("elementwise_add", "Y")
@@ -126,6 +121,7 @@ Conv2dXPUPattern::Conv2dXPUPattern(PDPattern* pattern,
   } else {
     ew_bias_add_out = conv_out;
   }
+  // batch_norm op
   PDNode* bn = nullptr;
   PDNode* bn_bias = nullptr;
   PDNode* bn_mean = nullptr;
@@ -136,12 +132,6 @@ Conv2dXPUPattern::Conv2dXPUPattern(PDPattern* pattern,
   PDNode* bn_saved_mean = nullptr;
   PDNode* bn_var_out = nullptr;
   PDNode* bn_saved_var = nullptr;
-  PDNode* ew_branch_add = nullptr;
-  PDNode* ew_branch_add_in = nullptr;
-  PDNode* ew_branch_add_out = nullptr;
-  PDNode* act = nullptr;
-  PDNode* act_out = nullptr;
-  // batch_norm op
   if (with_bn_) {
     ew_bias_add_out->assert_is_op_input("batch_norm", "X");
     bn_bias = pattern->NewNode(bn_bias_repr())
@@ -174,24 +164,11 @@ Conv2dXPUPattern::Conv2dXPUPattern(PDPattern* pattern,
     bn_out = ew_bias_add_out;
   }
   // ew_branch_add op
+  PDNode* ew_branch_add = nullptr;
+  PDNode* ew_branch_add_in = nullptr;
+  PDNode* ew_branch_add_out = nullptr;
   if (with_branch_) {
-    if (with_branch_x_) {
-      bn_out->assert_is_op_input("elementwise_add", "Y")->AsIntermediate();
-      ew_branch_add_in = pattern->NewNode(ew_branch_add_in_repr())
-                             ->assert_is_op_input("elementwise_add", "X")
-                             ->AsInput()
-                             ->assert_more([](Node* node) {
-                               return node->Var()->GetShape().size() == 4;
-                             });
-    } else if (with_branch_y_) {
-      bn_out->assert_is_op_input("elementwise_add", "X")->AsIntermediate();
-      ew_branch_add_in = pattern->NewNode(ew_branch_add_in_repr())
-                             ->assert_is_op_input("elementwise_add", "Y")
-                             ->AsInput()
-                             ->assert_more([](Node* node) {
-                               return node->Var()->GetShape().size() == 4;
-                             });
-    }
+    ew_branch_add_in = pattern->NewNode(ew_branch_add_in_repr())->AsInput();
     ew_branch_add =
         pattern->NewNode(ew_branch_add_repr())->assert_is_op("elementwise_add");
     ew_branch_add_out = pattern->NewNode(ew_branch_add_out_repr())
@@ -202,6 +179,8 @@ Conv2dXPUPattern::Conv2dXPUPattern(PDPattern* pattern,
     ew_branch_add_out = bn_out;
   }
   // act op
+  PDNode* act = nullptr;
+  PDNode* act_out = nullptr;
   if (!act_type_.empty()) {
     ew_branch_add_out->assert_is_op_input(act_type_, "X")->AsIntermediate();
     act = pattern->NewNode(act_repr())->assert_is_op(act_type_);
@@ -299,10 +278,9 @@ class Conv2dXPUFusePass : public FusePassBase {
   int ApplyImpl(ir::Graph* graph,
                 const std::string& conv_type,
                 const std::string& act_type,
-                bool with_conv_bias,
+                bool with_bias,
                 bool with_bn,
-                bool with_branch_x,
-                bool with_branch_y) const;
+                bool with_branch) const;
 
   const std::string name_scope_{"conv2d_xpu_fuse_pass"};
 };
@@ -314,31 +292,23 @@ void Conv2dXPUFusePass::ApplyImpl(ir::Graph* graph) const {
 
   int found_subgraph_count = 0;
   for (auto conv_type : {"conv2d", "depthwise_conv2d"}) {
-    for (auto with_conv_bias : {true, false}) {
+    for (auto with_bias : {true, false}) {
       for (auto with_bn : {true, false}) {
-        for (auto with_branch_x : {true, false}) {
-          for (auto with_branch_y : {true, false}) {
-            for (auto act_type : {
-                     "relu",
-                     "sigmoid",
-                     "tanh",
-                     "gelu",
-                     "leaky_relu",
-                     "hard_swish",
-                     "hard_sigmoid",
-                     "relu6",
-                     "swish",
-                     "",
-                 }) {
-              if (with_branch_x && with_branch_y) continue;
-              found_subgraph_count += ApplyImpl(graph,
-                                                conv_type,
-                                                act_type,
-                                                with_conv_bias,
-                                                with_bn,
-                                                with_branch_x,
-                                                with_branch_y);
-            }
+        for (auto with_branch : {true, false}) {
+          for (auto act_type : {
+                   "relu",
+                   "sigmoid",
+                   "tanh",
+                   "gelu",
+                   "leaky_relu",
+                   "hard_swish",
+                   "hard_sigmoid",
+                   "relu6",
+                   "swish",
+                   "",
+               }) {
+            found_subgraph_count += ApplyImpl(
+                graph, conv_type, act_type, with_bias, with_bn, with_branch);
           }
         }
       }
@@ -347,33 +317,200 @@ void Conv2dXPUFusePass::ApplyImpl(ir::Graph* graph) const {
   AddStatis(found_subgraph_count);
 }
 
+static void PrepareConv2dXPUBias(Graph* graph,
+                                 Scope* scope,
+                                 const std::string& bias_name,
+                                 const phi::DenseTensor& bias_new_t,
+                                 Node** bias_new) {
+  size_t bias_new_hash = HashTensor<float>(bias_new_t);
+  std::string pre_name = GetPrefixWithoutHash(bias_name);
+  std::string bias_new_name = pre_name + "_#" + std::to_string(bias_new_hash);
+  *bias_new = FindNodeWithName(graph, bias_new_name);
+  if (*bias_new == nullptr) {
+    VarDesc bias_new_desc(bias_new_name);
+    bias_new_desc.SetPersistable(true);
+    bias_new_desc.SetShape(vectorize(bias_new_t.dims()));
+    bias_new_desc.SetDataType(
+        framework::TransToProtoVarType(bias_new_t.dtype()));
+    *bias_new = graph->CreateVarNode(&bias_new_desc);
+    Assign(bias_new_t,
+           scope->Var(bias_new_name)->GetMutable<phi::DenseTensor>());
+  }
+}
+
+static void PrepareConv2dXPUInt16Filter(Graph* graph,
+                                        Scope* scope,
+                                        const std::string& filter_name,
+                                        const phi::DenseTensor& filter_t_fp32,
+                                        Node** filter_new,
+                                        Node** filter_max) {
+  phi::DenseTensor filter_new_t;
+  Assign(filter_t_fp32, &filter_new_t);
+  phi::DenseTensor filter_max_t;
+  PrepareWeight<int16_t>(&filter_new_t, &filter_max_t, false);
+
+  size_t filter_new_t_hash = HashTensor<int16_t>(filter_new_t);
+  size_t filter_max_t_hash = HashTensor<float>(filter_max_t);
+  std::string pre_name = GetPrefixWithoutHash(filter_name);
+  std::string filter_new_name =
+      pre_name + "_#" + std::to_string(filter_new_t_hash);
+  std::string filter_max_name =
+      pre_name + "_max_#" + std::to_string(filter_max_t_hash);
+  *filter_new = FindNodeWithName(graph, filter_new_name);
+  if (*filter_new == nullptr) {
+    VarDesc filter_new_desc(filter_new_name);
+    filter_new_desc.SetPersistable(true);
+    filter_new_desc.SetShape(vectorize(filter_new_t.dims()));
+    filter_new_desc.SetDataType(
+        framework::TransToProtoVarType(filter_new_t.dtype()));
+    *filter_new = graph->CreateVarNode(&filter_new_desc);
+    VarDesc filter_max_desc(filter_max_name);
+    filter_max_desc.SetPersistable(true);
+    filter_max_desc.SetShape(vectorize(filter_max_t.dims()));
+    filter_max_desc.SetDataType(proto::VarType::Type::VarType_Type_FP32);
+    *filter_max = graph->CreateVarNode(&filter_max_desc);
+
+    auto* filter_new_var = scope->FindVar(filter_new_name);
+    if (filter_new_var == nullptr) {
+      Assign(filter_new_t,
+             scope->Var(filter_new_name)->GetMutable<phi::DenseTensor>());
+      Assign(filter_max_t,
+             scope->Var(filter_max_name)->GetMutable<phi::DenseTensor>());
+    } else {
+      PADDLE_ENFORCE_NOT_NULL(
+          scope->FindVar(filter_max_name),
+          platform::errors::Fatal(
+              "dst_max(%s) variable should not be nullptr if dst(%s) "
+              "variable is exist. (src_name is %s)",
+              filter_max_name,
+              filter_new_name,
+              filter_name));
+    }
+  } else {
+    *filter_max = FindNodeWithName(graph, filter_max_name);
+    PADDLE_ENFORCE_NOT_NULL(
+        *filter_max,
+        platform::errors::Fatal(
+            "dst_max(%s) variable should not be nullptr if dst(%s) "
+            "variable is exist. (src_name is %s)",
+            filter_max_name,
+            filter_new_name,
+            filter_name));
+  }
+}
+
+static void PrepareMax(Graph* graph,
+                       Scope* scope,
+                       const std::string& name,
+                       const std::vector<float>& max_value,
+                       Node** max) {
+  auto* cpu_ctx = static_cast<phi::CPUContext*>(
+      platform::DeviceContextPool::Instance().Get(phi::CPUPlace()));
+  bool is_per_channel = max_value.size() > 1;
+  phi::DenseTensor max_t;
+  if (!is_per_channel) {
+    paddle::platform::DeviceContextPool& pool =
+        paddle::platform::DeviceContextPool::Instance();
+    const auto& dev_ctxs = pool.device_contexts();
+    auto place = phi::XPUPlace();  // xpu:0
+    for (auto it = dev_ctxs.begin(); it != dev_ctxs.end(); it++) {
+      if (it->first.GetType() == phi::AllocationType::XPU) {  // maybe xpu:1
+        place = it->first;
+      }
+    }
+    phi::XPUContext* xpu_ctx = static_cast<phi::XPUContext*>(pool.Get(place));
+    int max_ptr_size = xpu_ctx->x_context()->max_ptr_size();
+    max_t.Resize({max_ptr_size});
+    auto* max_t_data = cpu_ctx->Alloc<float>(&max_t);
+    for (int i = 0; i < max_ptr_size; i++) {
+      max_t_data[i] = max_value[0];
+    }
+  } else {
+    max_t.Resize({static_cast<int64_t>(max_value.size())});
+    memcpy(cpu_ctx->Alloc<float>(&max_t),
+           max_value.data(),
+           max_value.size() * sizeof(float));
+  }
+
+  size_t max_t_hash = HashTensor<float>(max_t);
+  std::string pre_name = GetPrefixWithoutHash(name);
+  std::string max_name = pre_name + "_max_#" + std::to_string(max_t_hash);
+  *max = FindNodeWithName(graph, max_name);
+  if (*max == nullptr) {
+    VarDesc max_desc(max_name);
+    max_desc.SetPersistable(true);
+    max_desc.SetShape(vectorize(max_t.dims()));
+    max_desc.SetDataType(proto::VarType::Type::VarType_Type_FP32);
+    *max = graph->CreateVarNode(&max_desc);
+    Assign(max_t, scope->Var(max_name)->GetMutable<phi::DenseTensor>());
+  }
+}
+
+static void PrepareWeightOneValue(Graph* graph,
+                                  Scope* scope,
+                                  Node** w_one_value) {
+  paddle::platform::DeviceContextPool& pool =
+      paddle::platform::DeviceContextPool::Instance();
+  const auto& dev_ctxs = pool.device_contexts();
+  auto place = phi::XPUPlace();  // xpu:0
+  for (auto it = dev_ctxs.begin(); it != dev_ctxs.end(); it++) {
+    if (it->first.GetType() == phi::AllocationType::XPU) {  // maybe xpu:1
+      place = it->first;
+    }
+  }
+  phi::XPUContext* xpu_ctx = static_cast<phi::XPUContext*>(pool.Get(place));
+  int max_ptr_size = xpu_ctx->x_context()->max_ptr_size();
+
+  auto* cpu_ctx = static_cast<phi::CPUContext*>(
+      platform::DeviceContextPool::Instance().Get(phi::CPUPlace()));
+  phi::DenseTensor w_one_value_t;
+  w_one_value_t.Resize({static_cast<int64_t>(max_ptr_size)});
+  float* one_value = cpu_ctx->Alloc<float>(&w_one_value_t);
+  for (int i = 0; i < max_ptr_size; i++) {
+    one_value[i] = 1.;
+  }
+
+  size_t w_one_value_t_hash = HashTensor<float>(w_one_value_t);
+  std::string pre_name = "_conv2d_xpu_w_one_value";
+  std::string w_one_value_name =
+      pre_name + "_#" + std::to_string(w_one_value_t_hash);
+  *w_one_value = FindNodeWithName(graph, w_one_value_name);
+  if (*w_one_value == nullptr) {
+    VarDesc w_one_value_desc(w_one_value_name);
+    w_one_value_desc.SetPersistable(true);
+    w_one_value_desc.SetShape(vectorize(w_one_value_t.dims()));
+    w_one_value_desc.SetDataType(proto::VarType::Type::VarType_Type_FP32);
+    *w_one_value = graph->CreateVarNode(&w_one_value_desc);
+    Assign(w_one_value_t,
+           scope->Var(w_one_value_name)->GetMutable<phi::DenseTensor>());
+  }
+}
+
 int Conv2dXPUFusePass::ApplyImpl(ir::Graph* graph,
                                  const std::string& conv_type,
                                  const std::string& act_type,
-                                 bool with_conv_bias,
+                                 bool with_bias,
                                  bool with_bn,
-                                 bool with_branch_x,
-                                 bool with_branch_y) const {
+                                 bool with_branch) const {
   GraphPatternDetector gpd;
   patterns::Conv2dXPUPattern pattern(gpd.mutable_pattern(),
                                      name_scope_,
                                      conv_type,
                                      act_type,
-                                     with_conv_bias,
+                                     with_bias,
                                      with_bn,
-                                     with_branch_x,
-                                     with_branch_y);
+                                     with_branch);
   int found_subgraph_count = 0;
   auto handler = [&](const GraphPatternDetector::subgraph_t& subgraph,
                      Graph* graph) {
     VLOG(4) << "handle Conv2dXPUFusePass fuse";
-    /* declare operator node's name */
+    // declare operator node's name
     GET_IR_NODE(conv);
     GET_IR_NODE(ew_bias_add);
     GET_IR_NODE(bn);
     GET_IR_NODE(ew_branch_add);
     GET_IR_NODE(act);
-    /* declare variable node's name*/
+    // declare variable node's name
     GET_IR_NODE(input);
     GET_IR_NODE(conv_filter);
     GET_IR_NODE(conv_out);
@@ -395,143 +532,214 @@ int Conv2dXPUFusePass::ApplyImpl(ir::Graph* graph,
     auto* scope = param_scope();
     PADDLE_ENFORCE_NOT_NULL(
         scope, platform::errors::InvalidArgument("Scope cannot be nullptr."));
-
-    // recompute bias and weight for conv2d_xpu op
+    auto* cpu_ctx = static_cast<phi::CPUContext*>(
+        platform::DeviceContextPool::Instance().Get(phi::CPUPlace()));
+    bool enable_int8 =
+        graph->Has("enable_int8") && graph->Get<bool>("enable_int8");
+    bool has_bias = with_bias || with_bn;
     auto* filter_t =
         scope->FindVar(conv_filter->Name())->GetMutable<phi::DenseTensor>();
     auto filter_dims = filter_t->dims();
-    bool has_bias = with_bn || with_conv_bias;
-    // Create conv_fusion_bias (conv bias) variable
-    Node* fusion_bias_node = nullptr;
-    if (has_bias) {
-      if (ew_bias_add != nullptr) {
-        auto* ew_bias_add_y_t = scope->FindVar(ew_bias_add_y->Name())
-                                    ->GetMutable<phi::DenseTensor>();
-        auto ew_bias_add_y_dims = ew_bias_add_y_t->dims();
-        PADDLE_ENFORCE_EQ(filter_dims[0],
-                          ew_bias_add_y_dims[0],
-                          platform::errors::InvalidArgument(
-                              "the shape[%d] of elewise bias tensor "
-                              "must equal out_channel[%d] of conv",
-                              ew_bias_add_y_dims[0],
-                              filter_dims[0]));
-        PrepareBias(graph, scope, block, ew_bias_add_y, &fusion_bias_node);
-      }
-      if (bn != nullptr) {
-        auto bn_bias_t =
-            scope->Var(bn_bias->Name())->GetMutable<phi::DenseTensor>();
-        PADDLE_ENFORCE_EQ(filter_dims[0],
-                          bn_bias_t->dims()[0],
-                          platform::errors::InvalidArgument(
-                              "the shape[%d] of bn bias tensor "
-                              "must equal out_channel[%d] of conv",
-                              bn_bias_t->dims()[0],
-                              filter_dims[0]));
-        auto bn_scale_t =
-            scope->Var(bn_scale->Name())->GetMutable<phi::DenseTensor>();
-        auto bn_mean_t =
-            scope->Var(bn_mean->Name())->GetMutable<phi::DenseTensor>();
-        auto bn_var_t =
-            scope->Var(bn_var->Name())->GetMutable<phi::DenseTensor>();
-        float* filter_ptr =
-            filter_t->mutable_data<float>(paddle::platform::CPUPlace());
-        float* bn_scale_ptr =
-            bn_scale_t->mutable_data<float>(paddle::platform::CPUPlace());
-        float* bn_bias_ptr =
-            bn_bias_t->mutable_data<float>(paddle::platform::CPUPlace());
-        float* bn_mean_ptr =
-            bn_mean_t->mutable_data<float>(paddle::platform::CPUPlace());
-        float* bn_var_ptr =
-            bn_var_t->mutable_data<float>(paddle::platform::CPUPlace());
-        auto mean_len = bn_mean_t->numel();
-        auto filter_len = filter_t->numel();
-        auto filter_stride = filter_len / mean_len;
-        float epsilon = PADDLE_GET_CONST(float, bn->Op()->GetAttr("epsilon"));
-        if (fusion_bias_node == nullptr) {  // prev node is conv
-          PrepareBias(graph, scope, block, bn_bias, &fusion_bias_node);
-        }
-        auto fusion_bias_t = scope->Var(fusion_bias_node->Name())
-                                 ->GetMutable<phi::DenseTensor>();
-        float* fusion_bias_ptr =
-            fusion_bias_t->mutable_data<float>(paddle::platform::CPUPlace());
-        // recompute bias and weights
-        if (ew_bias_add == nullptr) {
-          for (int i = 0; i < mean_len; ++i) {
-            bn_scale_ptr[i] = bn_scale_ptr[i] / sqrtf(bn_var_ptr[i] + epsilon);
-            fusion_bias_ptr[i] += (0.f - bn_mean_ptr[i]) * bn_scale_ptr[i];
-            for (int j = 0; j < filter_stride; j++) {
-              filter_ptr[i * filter_stride + j] *= bn_scale_ptr[i];
-            }
-          }
-        } else {
-          for (int i = 0; i < mean_len; ++i) {
-            bn_scale_ptr[i] = bn_scale_ptr[i] / sqrtf(bn_var_ptr[i] + epsilon);
-            bn_bias_ptr[i] +=
-                (fusion_bias_ptr[i] - bn_mean_ptr[i]) * bn_scale_ptr[i];
-            for (int j = 0; j < filter_stride; j++) {
-              filter_ptr[i * filter_stride + j] *= bn_scale_ptr[i];
-            }
-          }
-          memcpy(fusion_bias_ptr, bn_bias_ptr, mean_len * sizeof(float));
-        }
-      }
+    int kernel_dtype = proto::VarType::Type::VarType_Type_FP32;
+    if (filter_t->dtype() == phi::DataType::FLOAT16) {
+      kernel_dtype = proto::VarType::Type::VarType_Type_FP16;
+    } else if (filter_t->dtype() == phi::DataType::INT8) {
+      kernel_dtype = proto::VarType::Type::VarType_Type_INT8;
     }
-    // filter max
-    Node* filter_int16 = nullptr;
+
+    phi::DenseTensor bias_t;
+    bias_t.Resize({filter_dims[0]});
+    memset(cpu_ctx->Alloc<float>(&bias_t), 0, filter_dims[0] * sizeof(float));
+    if (with_bias) {
+      auto* ew_bias_add_y_t =
+          scope->FindVar(ew_bias_add_y->Name())->GetMutable<phi::DenseTensor>();
+      auto ew_bias_add_y_dims = ew_bias_add_y_t->dims();
+      PADDLE_ENFORCE_EQ(filter_dims[0],
+                        ew_bias_add_y_dims[0],
+                        platform::errors::InvalidArgument(
+                            "the shape[%d] of elewise bias tensor "
+                            "must equal out_channel[%d] of conv",
+                            ew_bias_add_y_dims[0],
+                            filter_dims[0]));
+      Assign(*ew_bias_add_y_t, &bias_t);
+    }
+    CastToFp32(&bias_t);
+
+    // recompute bias and weight for conv2d_xpu op
+    Node* filter_new = nullptr;
     Node* filter_max = nullptr;
-    PrepareWeight<int16_t>(
-        graph, scope, block, conv_filter, &filter_int16, &filter_max, false);
-    // output && output max
-    std::string conv2d_xpu_out_name;
-    if (!act_type.empty()) {
-      conv2d_xpu_out_name = act_out->Name();
-    } else if (ew_branch_add) {
-      conv2d_xpu_out_name = ew_branch_add_out->Name();
-    } else if (bn) {
-      conv2d_xpu_out_name = bn_out->Name();
-    } else if (ew_bias_add) {
-      conv2d_xpu_out_name = ew_bias_add_out->Name();
+    if (with_bn) {
+      // fuse bn
+      float* bn_scale_data = scope->Var(bn_scale->Name())
+                                 ->GetMutable<phi::DenseTensor>()
+                                 ->data<float>();
+      float* bn_bias_data = scope->Var(bn_bias->Name())
+                                ->GetMutable<phi::DenseTensor>()
+                                ->data<float>();
+      float* bn_mean_data = scope->Var(bn_mean->Name())
+                                ->GetMutable<phi::DenseTensor>()
+                                ->data<float>();
+      float* bn_var_data = scope->Var(bn_var->Name())
+                               ->GetMutable<phi::DenseTensor>()
+                               ->data<float>();
+      float epsilon = bn->Op()->GetAttrIfExists<float>("epsilon");
+
+      // recompute bias
+      auto* bias_data = bias_t.data<float>();
+      for (int64_t i = 0; i < filter_dims[0]; i++) {
+        float trans_scale = bn_scale_data[i] / sqrtf(bn_var_data[i] + epsilon);
+        bias_data[i] =
+            (bias_data[i] - bn_mean_data[i]) * trans_scale + bn_bias_data[i];
+      }
+
+      // recompute filter
+      int64_t filter_step = filter_t->numel() / filter_dims[0];
+      if (!enable_int8) {
+        // float32/float16 filter
+        phi::DenseTensor filter_t_new;
+        Assign(*filter_t, &filter_t_new);
+        CastToFp32(&filter_t_new);
+        float* filter_data = filter_t_new.data<float>();
+        for (int64_t i = 0; i < filter_dims[0]; i++) {
+          float trans_scale =
+              bn_scale_data[i] / sqrtf(bn_var_data[i] + epsilon);
+          for (int64_t j = 0; j < filter_step; j++) {
+            filter_data[i * filter_step + j] *= trans_scale;
+          }
+        }
+        PrepareConv2dXPUInt16Filter(graph,
+                                    scope,
+                                    conv_filter->Name(),
+                                    filter_t_new,
+                                    &filter_new,
+                                    &filter_max);
+
+      } else {
+        // int8 filter
+        std::vector<float> max_value = PADDLE_GET_CONST(
+            std::vector<float>, conv->Op()->GetAttr("Filter_max"));
+        if (max_value.size() == 1) {
+          max_value = std::vector<float>(filter_dims[0], max_value[0]);
+        }
+        for (int64_t i = 0; i < filter_dims[0]; i++) {
+          float trans_scale =
+              bn_scale_data[i] / sqrtf(bn_var_data[i] + epsilon);
+          max_value[i] *= trans_scale;
+        }
+        PrepareMax(graph, scope, conv_filter->Name(), max_value, &filter_max);
+        filter_new = conv_filter;
+      }
     } else {
-      conv2d_xpu_out_name = conv_out->Name();
+      // not fuse bn
+      if (!enable_int8) {
+        // float32/float16 filter
+        PrepareWeight<int16_t>(
+            graph, scope, block, conv_filter, &filter_new, &filter_max, false);
+      } else {
+        // int8 filter
+        std::vector<float> max_value = PADDLE_GET_CONST(
+            std::vector<float>, conv->Op()->GetAttr("Filter_max"));
+        if (max_value.size() == 1) {
+          max_value = std::vector<float>(filter_dims[0], max_value[0]);
+        }
+        PrepareMax(graph, scope, conv_filter->Name(), max_value, &filter_max);
+        filter_new = conv_filter;
+      }
     }
-    std::string conv_out_max_name = conv2d_xpu_out_name + "_max";
-    VarDesc conv_out_max_desc(conv_out_max_name);
-    Node* conv2d_xpu_out_max = graph->CreateVarNode(&conv_out_max_desc);
+
+    Node* w_one_value = nullptr;
+    if (enable_int8) {
+      PrepareWeightOneValue(graph, scope, &w_one_value);
+    }
+
+    Node* bias_new = nullptr;
+    PrepareConv2dXPUBias(graph,
+                         scope,
+                         with_bias ? ew_bias_add_y->Name() : "",
+                         bias_t,
+                         &bias_new);
+
+    Node* branch_max = nullptr;
+    if (with_branch && enable_int8) {
+      auto branch_name = ew_branch_add_in->Name();
+      auto branch_max_value = GetMaxAttr(ew_branch_add->Op(), branch_name);
+      PrepareMax(graph, scope, branch_name, branch_max_value, &branch_max);
+    }
+
+    Node* x_max = nullptr;
+    if (enable_int8) {
+      auto x_name = input->Name();
+      auto x_max_value = PADDLE_GET_CONST(std::vector<float>,
+                                          conv->Op()->GetAttr("Input_max"));
+      PrepareMax(graph, scope, x_name, x_max_value, &x_max);
+    }
+
+    // output && output max
+    Node* out_max = nullptr;
+    std::string out_name;
+    std::vector<float> out_max_value;
+    if (!act_type.empty()) {
+      out_name = act_out->Name();
+      out_max_value = act->Op()->GetAttrIfExists<std::vector<float>>("Out_max");
+    } else if (ew_branch_add) {
+      out_name = ew_branch_add_out->Name();
+      out_max_value =
+          ew_branch_add->Op()->GetAttrIfExists<std::vector<float>>("Out_max");
+    } else if (bn) {
+      out_name = bn_out->Name();
+      out_max_value = bn->Op()->GetAttrIfExists<std::vector<float>>("Y_max");
+    } else if (ew_bias_add) {
+      out_name = ew_bias_add_out->Name();
+      out_max_value =
+          ew_bias_add->Op()->GetAttrIfExists<std::vector<float>>("Out_max");
+    } else {
+      out_name = conv_out->Name();
+      out_max_value =
+          conv->Op()->GetAttrIfExists<std::vector<float>>("Output_max");
+    }
+    if (enable_int8) {
+      PrepareMax(graph, scope, out_name, out_max_value, &out_max);
+    } else {
+      std::string out_max_name = out_name + "_max";
+      VarDesc out_max_desc(out_max_name);
+      out_max = graph->CreateVarNode(&out_max_desc);
+    }
+
     // Generate conv2d_xpu op
     framework::OpDesc conv2d_xpu_op_desc(block);
-    // set input&output var
     conv2d_xpu_op_desc.SetType("conv2d_xpu");
-    conv2d_xpu_op_desc.SetInput("input", {input->Name()});
-    conv2d_xpu_op_desc.SetInput("filter", {filter_int16->Name()});
-    conv2d_xpu_op_desc.SetInput("filter_max", {filter_max->Name()});
-    conv2d_xpu_op_desc.SetOutput("output", {conv2d_xpu_out_name});
-    conv2d_xpu_op_desc.SetOutput("output_max", {conv_out_max_name});
-    // set fusion_bias input node
-    if (has_bias) {
-      conv2d_xpu_op_desc.SetInput("bias", {fusion_bias_node->Name()});
-      conv2d_xpu_op_desc.SetAttr("has_bias", has_bias);
+    conv2d_xpu_op_desc.SetInput("x", {input->Name()});
+    conv2d_xpu_op_desc.SetInput("w", {filter_new->Name()});
+    conv2d_xpu_op_desc.SetInput("w_max", {filter_max->Name()});
+    conv2d_xpu_op_desc.SetOutput("out", {out_name});
+    conv2d_xpu_op_desc.SetOutput("out_max", {out_max->Name()});
+    if (enable_int8) {
+      conv2d_xpu_op_desc.SetInput("x_max", {x_max->Name()});
+      conv2d_xpu_op_desc.SetInput("w_one_value", {w_one_value->Name()});
     }
-    // set ew_branch_add input node
-    if (ew_branch_add_in != nullptr) {
+    if (has_bias) {
+      conv2d_xpu_op_desc.SetInput("bias", {bias_new->Name()});
+    }
+    if (with_branch) {
       conv2d_xpu_op_desc.SetInput("branch", {ew_branch_add_in->Name()});
+      if (enable_int8) {
+        conv2d_xpu_op_desc.SetInput("branch_max", {branch_max->Name()});
+      }
     }
     // set attrs of conv2d_xpu
-    float act_param_ = 0.0f;
+    float act_param = 0.0f;
     if (!act_type.empty()) {
       if (act_type == "leaky_relu") {
-        act_param_ = PADDLE_GET_CONST(float, act->Op()->GetAttr("alpha"));
+        act_param = PADDLE_GET_CONST(float, act->Op()->GetAttr("alpha"));
       } else if (act_type == "hard_sigmoid") {
-        act_param_ = PADDLE_GET_CONST(float, act->Op()->GetAttr("slope"));
+        act_param = PADDLE_GET_CONST(float, act->Op()->GetAttr("slope"));
       }
     }
     conv2d_xpu_op_desc.SetAttr("act_type", ConvertActivationType(act_type));
-    conv2d_xpu_op_desc.SetAttr("act_param", act_param_);
-    std::vector<int> conv_bias;
-    if (has_bias) {
-      conv_bias.push_back(1);
-    } else {
-      conv_bias.push_back(0);
-    }
+    conv2d_xpu_op_desc.SetAttr("act_param", act_param);
+    conv2d_xpu_op_desc.SetAttr("kernel_dtype", kernel_dtype);
+    // out_dtype will be reset in reset_out_dtype_pass
+    conv2d_xpu_op_desc.SetAttr("out_dtype", kernel_dtype);
     if (conv->Op()->HasAttr("padding_algorithm")) {
       conv2d_xpu_op_desc.SetAttr(
           "padding_algorithm",
@@ -551,6 +759,7 @@ int Conv2dXPUFusePass::ApplyImpl(ir::Graph* graph,
                       platform::errors::InvalidArgument(
                           "padding length should be 4, but received %d, ",
                           conv_paddings.size()));
+    conv2d_xpu_op_desc.SetAttr("paddings", conv_paddings);
     conv2d_xpu_op_desc.SetAttr(
         "dilations",
         PADDLE_GET_CONST(std::vector<int>, conv->Op()->GetAttr("dilations")));
@@ -559,24 +768,24 @@ int Conv2dXPUFusePass::ApplyImpl(ir::Graph* graph,
     conv2d_xpu_op_desc.SetAttr(
         "strides",
         PADDLE_GET_CONST(std::vector<int>, conv->Op()->GetAttr("strides")));
-    conv2d_xpu_op_desc.SetAttr("conv_bias", conv_bias);
-    conv2d_xpu_op_desc.SetAttr("op_type", std::vector<int>{0});
-    conv2d_xpu_op_desc.SetAttr("place_x", std::vector<int>{0});
-    conv2d_xpu_op_desc.SetAttr("place_y", std::vector<int>{9});
-    conv2d_xpu_op_desc.SetAttr("place_z", std::vector<int>{10});
-    conv2d_xpu_op_desc.SetAttr("paddings", conv_paddings);
-    conv2d_xpu_op_desc.SetAttr("block_lod", std::vector<int>{1});
-    conv2d_xpu_op_desc.SetAttr("has_branch", with_branch_x || with_branch_y);
-
     auto* conv2d_xpu = graph->CreateOpNode(&conv2d_xpu_op_desc);
     IR_NODE_LINK_TO(input, conv2d_xpu);
-    IR_NODE_LINK_TO(filter_int16, conv2d_xpu);
+    if (x_max) {
+      IR_NODE_LINK_TO(x_max, conv2d_xpu);
+    }
+    IR_NODE_LINK_TO(filter_new, conv2d_xpu);
     IR_NODE_LINK_TO(filter_max, conv2d_xpu);
-    if (ew_bias_add || bn) {
-      SAFE_IR_NODE_LINK_TO(fusion_bias_node, conv2d_xpu);
+    if (w_one_value) {
+      IR_NODE_LINK_TO(w_one_value, conv2d_xpu);
+    }
+    if (has_bias) {
+      IR_NODE_LINK_TO(bias_new, conv2d_xpu);
     }
     if (ew_branch_add_in) {
       IR_NODE_LINK_TO(ew_branch_add_in, conv2d_xpu);
+    }
+    if (branch_max) {
+      IR_NODE_LINK_TO(branch_max, conv2d_xpu);
     }
     if (act_out) {
       IR_NODE_LINK_TO(conv2d_xpu, act_out);
@@ -589,7 +798,8 @@ int Conv2dXPUFusePass::ApplyImpl(ir::Graph* graph,
     } else {
       IR_NODE_LINK_TO(conv2d_xpu, conv_out);
     }
-    IR_NODE_LINK_TO(conv2d_xpu, conv2d_xpu_out_max);
+    IR_NODE_LINK_TO(conv2d_xpu, out_max);
+
     // delete useless node
     std::unordered_set<const Node*> delete_nodes = {conv};
     if (act != nullptr) {
