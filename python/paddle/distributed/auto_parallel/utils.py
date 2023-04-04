@@ -22,15 +22,13 @@ from functools import reduce
 import numpy as np
 
 import paddle
-from paddle.fluid.framework import Variable
-from paddle.fluid.io import is_belong_to_optimizer, is_parameter
 from paddle.framework import core
+from paddle.framework.io_utils import is_belong_to_optimizer, is_parameter
+from paddle.static import Variable
 
-from .dist_attribute import (
-    OperatorDistributedAttribute,
-    TensorDistributedAttribute,
-)
+from .dist_attribute import OperatorDistAttr, TensorDistAttr
 from .process_group import get_all_process_groups
+from .process_mesh import ProcessMesh
 
 OpRole = core.op_proto_and_checker_maker.OpRole
 OP_ROLE_KEY = core.op_proto_and_checker_maker.kOpRoleAttrName()
@@ -100,7 +98,7 @@ def convert_to_dims_mapping(shard_spec, process_mesh):
     for shard in shard_spec:
         if shard is None:
             dims_mapping.append(-1)
-        elif process_mesh.topology[process_mesh.dim_names.index(shard)] == 1:
+        elif process_mesh.shape[process_mesh.dim_names.index(shard)] == 1:
             dims_mapping.append(-1)
         else:
             dims_mapping.append(process_mesh.dim_names.index(shard))
@@ -275,7 +273,7 @@ def _get_comm_group(processes, shape, axis, rank):
     Given a rank and the processes mesh the rank belongs to,
     compute the communication peers of the rank based on the give axis in the mesh.
 
-    Example: 16 processes managed in a 4-Dimensinal mesh with shape of [2, 2, 2, 2].
+    Example: 16 processes managed in a 4-Dimensional mesh with shape of [2, 2, 2, 2].
     the rank communication peers of rank 0 (included) are following:
     in axis 0: [0, 1]
     in axis 1: [0, 2]
@@ -349,7 +347,7 @@ def _coordinate2linear_idx(mesh_shape, coordinate):
     # that the processes in mesh are
     #    1. starts from 0
     #    2. continuous
-    # it will be wrong if ths above condition doesnot meet,
+    # it will be wrong if ths above condition does not meet,
     # e.g. process_mesh = { process_groups = [7, 8, 9,10, 12, 13, 14, 15], mesh = [2, 4]}
     # if you want a more general mapping, you should use cartesian product
 
@@ -429,26 +427,26 @@ def _get_corresponding_rank(dist_context, target_mesh, rank):
 
     coordinate = None
     for mesh in dist_context.process_meshes:
-        if rank in mesh.processes and mesh.topology == target_mesh.topology:
+        if rank in mesh.process_ids and mesh.shape == target_mesh.shape:
             coordinate = _linear_idx2coordinate(
-                mesh.topology, mesh.processes.index(rank)
+                mesh.shape, mesh.process_ids.index(rank)
             )
             break
 
     # assert coordinate is not None, "could NOT found rank [{}] in any registered mesh".format(
     #     rank)
     if coordinate is not None:
-        return target_mesh.processes[
-            _coordinate2linear_idx(mesh.topology, coordinate)
+        return target_mesh.process_ids[
+            _coordinate2linear_idx(mesh.shape, coordinate)
         ]
     else:
-        return target_mesh.processes[0]
+        return target_mesh.process_ids[0]
 
 
 def _get_unshard_dist_shape(var, dist_attr):
     var_shape = var.shape
     mapping = dist_attr.dims_mapping
-    mesh = dist_attr.process_mesh.topology
+    mesh = dist_attr.process_mesh.shape
     assert len(var_shape) == len(
         mapping
     ), "variable shape [{}] and dim_mapping [{}] is NOT match !".format(
@@ -523,9 +521,7 @@ def _check_valid_path(file_path):
                     "but got '{}'.".format(str(type(file)))
                 )
             if not os.path.exists(file):
-                raise ValueError(
-                    "The file path '{}' does not exist.".format(file)
-                )
+                raise ValueError(f"The file path '{file}' does not exist.")
         return file_path
     else:
         raise TypeError(
@@ -596,7 +592,7 @@ def save_distributed_checkpoint(
     dist_context=None,
 ):
     """
-    Save model parameter state, optimzer state, distributed attribute and
+    Save model parameter state, optimizer state, distributed attribute and
     additional information of each rank.
 
     Args:
@@ -621,7 +617,7 @@ def save_distributed_checkpoint(
     """
     from .dist_context import get_default_distributed_context
 
-    assert isinstance(program, paddle.fluid.framework.Program)
+    assert isinstance(program, paddle.static.Program)
     assert isinstance(is_integrated, bool)
     if dist_context is None:
         dist_context = get_default_distributed_context()
@@ -704,7 +700,7 @@ def load_checkpoint_into_program(
     """
     from .dist_context import get_default_distributed_context
 
-    assert isinstance(program, paddle.fluid.framework.Program)
+    assert isinstance(program, paddle.static.Program)
     assert _check_valid_path(
         checkpoint_path
     ), "'checkpoint_path' cannot be None."
@@ -733,7 +729,7 @@ def load_parameter_into_program(param_dict, program):
         program(Program): the program to be updated
     """
     assert isinstance(param_dict, dict)
-    assert program and isinstance(program, paddle.fluid.framework.Program)
+    assert program and isinstance(program, paddle.static.Program)
     if not param_dict:
         return
     program.set_state_dict(param_dict)
@@ -744,16 +740,14 @@ def _save_distributed_attribute(program, dist_attr_path, dist_context):
     # TODO: just save a complete distributed attribute file
     rank_id = paddle.distributed.get_rank()
     dist_attr_name = os.path.join(
-        dist_attr_path, "dist_attr_rank{}.pdattr".format(rank_id)
+        dist_attr_path, f"dist_attr_rank{rank_id}.pdattr"
     )
     dist_attr_dict = {
         "model": get_dist_attr(program, dist_context),
         "world_size": paddle.distributed.get_world_size(),
     }
     paddle.save(dist_attr_dict, dist_attr_name)
-    logging.info(
-        "Already saved distributed attribute to '{}'.".format(dist_attr_path)
-    )
+    logging.info(f"Already saved distributed attribute to '{dist_attr_path}'.")
 
 
 def _load_distributed_attribute(dist_attr_path):
@@ -776,7 +770,7 @@ def _save_distributed_state_dict(program, addition_info, checkpoint_path):
     """Save parameters' state_dict"""
     rank = paddle.distributed.get_rank()
     ckpt_file_name = os.path.join(
-        checkpoint_path, "model_state_rank{}.pdmodel".format(rank)
+        checkpoint_path, f"model_state_rank{rank}.pdmodel"
     )
     state_dict = {
         "model": program.state_dict(),
@@ -784,7 +778,7 @@ def _save_distributed_state_dict(program, addition_info, checkpoint_path):
         "addition_info": addition_info,
     }
     paddle.save(state_dict, ckpt_file_name)
-    logging.info("Already saved model to '{}'.".format(checkpoint_path))
+    logging.info(f"Already saved model to '{checkpoint_path}'.")
 
 
 def _load_distributed_state_dict(checkpoint_path):
@@ -820,7 +814,7 @@ def get_dist_attr(program, dist_context=None):
     """
     from .dist_context import get_default_distributed_context
 
-    assert isinstance(program, paddle.fluid.framework.Program)
+    assert isinstance(program, paddle.static.Program)
     if dist_context is None:
         dist_context = get_default_distributed_context()
     dist_attr = {}
@@ -832,8 +826,8 @@ def get_dist_attr(program, dist_context=None):
             process_mesh = tensor_dist_attr.process_mesh
             dims_mapping = tensor_dist_attr.dims_mapping
             dist_attr[var.name] = {
-                "process_shape": process_mesh.topology,
-                "process_group": process_mesh.processes,
+                "process_shape": process_mesh.shape,
+                "process_group": process_mesh.process_ids,
                 "dims_mapping": dims_mapping,
             }
     return dist_attr
@@ -1174,7 +1168,7 @@ def _get_split_indices(
             split_indices_list = partition_index
     split_indices_list = list(
         map(
-            lambda x, y: list(set(x) - set([y]) - set([0])),
+            lambda x, y: list(set(x) - {y} - {0}),
             split_indices_list,
             complete_shape,
         )
@@ -1184,6 +1178,8 @@ def _get_split_indices(
 
 
 def set_grad_var_shape(program, dist_context):
+    from paddle.distributed.fleet.meta_optimizers.common import OpRole
+
     from .operators.common import infer_shape
 
     block = program.global_block()
@@ -1261,6 +1257,9 @@ def set_grad_var_shape(program, dist_context):
                 "fused_softmax_mask_upper_triangle_grad",
                 "flatten_contiguous_range_grad",
                 "relu_grad",
+                "exp_grad",
+                "sigmoid_grad",
+                "unsqueeze2_grad",
             ]
             forward_list = [
                 "reshape2",
@@ -1279,6 +1278,9 @@ def set_grad_var_shape(program, dist_context):
                 "fused_softmax_mask_upper_triangle",
                 "flatten_contiguous_range",
                 "relu",
+                "exp",
+                "sigmoid",
+                "unsqueeze2",
             ]
             if op.type in need_set_shape_list:
                 for forward_op in block.ops:
@@ -1380,10 +1382,19 @@ def get_loss_op(block):
 
 
 def set_var_dist_attr(dist_context, var, dims_mapping, process_mesh, **kwargs):
-    tensor_dist_attr = TensorDistributedAttribute()
+    tensor_dist_attr = TensorDistAttr()
     tensor_dist_attr.dims_mapping = dims_mapping
     # TODO get global mesh group
-    tensor_dist_attr.process_mesh = process_mesh
+    if isinstance(process_mesh, (list, np.ndarray)):
+        tensor_dist_attr.process_mesh = ProcessMesh(process_mesh)
+    elif isinstance(process_mesh, core.ProcessMesh):
+        tensor_dist_attr.process_mesh = process_mesh
+    else:
+        raise ValueError(
+            "{} must be a instance of ProcessMesh or list, but receive {}".format(
+                process_mesh, type(process_mesh)
+            )
+        )
     if "mark_annotated" in kwargs and kwargs["mark_annotated"]:
         tensor_dist_attr.mark_annotated("dims_mapping")
         tensor_dist_attr.mark_annotated("process_mesh")
@@ -1397,7 +1408,7 @@ def naive_set_dist_op_attr_for_program_by_mesh_and_mapping(
     assert process_mesh is not None
     assert ref_mapping is not None
 
-    new_op_dist_attr = OperatorDistributedAttribute()
+    new_op_dist_attr = OperatorDistAttr()
 
     for input_varname in new_op.desc.input_arg_names():
         new_op_dist_attr.set_input_dims_mapping(input_varname, ref_mapping)
@@ -1411,12 +1422,9 @@ def naive_set_dist_op_attr_for_program_by_mesh_and_mapping(
 def naive_set_dist_op_attr_for_program_by_mesh(
     new_op, process_mesh, ctx, is_recompute=False
 ):
-    # hack to skip coalesce var for dist attr
-    if not is_recompute:
-        return
     assert process_mesh is not None
 
-    new_op_dist_attr = OperatorDistributedAttribute()
+    new_op_dist_attr = OperatorDistAttr()
 
     for input_varname in new_op.desc.input_arg_names():
         var = ctx.serial_main_program.global_block().var(input_varname)
@@ -1672,7 +1680,7 @@ def get_standalone_cost_data(distributed_programs):
                 shape = info[
                     shape_left_boundary + 1 : shape_right_boundary
                 ].split(",")
-                shape = list(map(lambda x: int(x.strip()), shape))
+                shape = [int(x.strip()) for x in shape]
                 dtype_factor = 1
                 total_static_input_size += reduce(lambda x, y: x * y, shape)
                 if op.type == "c_embedding":
@@ -1778,7 +1786,9 @@ def set_dist_op_desc_original_id(dist_op_desc, op_desc, dist_context):
         return
     # Third, print error infomation if we cannot find the original id
     else:
-        assert False, "Cannot find the original id in the distributed context"
+        raise AssertionError(
+            "Cannot find the original id in the distributed context"
+        )
 
 
 def to_list(value):
@@ -1832,7 +1842,7 @@ def get_var_numel(var):
 def get_lr(optimizer):
     if isinstance(optimizer, paddle.optimizer.Optimizer):
         return optimizer.get_lr()
-    elif isinstance(optimizer, paddle.fluid.optimizer.Optimizer):
+    elif isinstance(optimizer, paddle.static.Optimizer):
         if isinstance(optimizer._learning_rate, float):
             return optimizer._learning_rate
         else:
@@ -1840,9 +1850,7 @@ def get_lr(optimizer):
     else:
         raise TypeError(
             "'optimizer' must be object of class `paddle.optimizer.Optimizer`"
-            " or `paddle.fluid.optimizer.Optimizer`, but got {}.".format(
-                type(optimizer)
-            )
+            " or `paddle.static.Optimizer`, but got {}.".format(type(optimizer))
         )
 
 
@@ -1951,6 +1959,9 @@ def set_recompute_segments(model, losses, strategy, program):
             and hasattr(model.gpt, "checkpoints")
         ):
             ckpts = model.gpt.checkpoints
+            # last recompute segment is not need to recompute
+            if len(ckpts) > 2:
+                ckpts.pop()
         else:
             ckpts = recompute.checkpoints
     else:
@@ -2006,16 +2017,16 @@ def get_input_split_info(cur_rank, var, dist_context):
     process_mesh = tensor_dist_attr.process_mesh
     dims_mapping = tensor_dist_attr.dims_mapping
 
-    if cur_rank not in process_mesh.processes:
+    if cur_rank not in process_mesh.process_ids:
         rank_id = _get_corresponding_rank(dist_context, process_mesh, cur_rank)
     else:
         rank_id = cur_rank
 
     batch_size_axis = dims_mapping[0]
-    if batch_size_axis > -1 and process_mesh.topology[batch_size_axis] > 1:
+    if batch_size_axis > -1 and process_mesh.shape[batch_size_axis] > 1:
         group_ranks = _get_comm_group(
-            process_mesh.processes,
-            process_mesh.topology,
+            process_mesh.process_ids,
+            process_mesh.shape,
             batch_size_axis,
             rank_id,
         )
@@ -2069,20 +2080,20 @@ def _copy_tensor_dist_attr_to_cpp(cpp_dist_attr, py_dist_attr):
             ["d" + str(i) for i in range(len(py_process_mesh.shape))],
         )
     cpp_dist_attr.dims_mapping = py_dist_attr.dims_mapping
-    cpp_dist_attr.annotated = py_dist_attr._is_annotated
+    cpp_dist_attr.annotated = py_dist_attr.annotated
 
 
 def _copy_tensor_dist_attr_from_cpp(cpp_dist_attr, py_dist_attr):
     from .process_mesh import ProcessMesh
 
     cpp_process_mesh = cpp_dist_attr.process_mesh
-    if not cpp_process_mesh.empty():
+    if cpp_process_mesh is not None:
         py_dist_attr.process_mesh = ProcessMesh(
             shape=cpp_process_mesh.shape,
             process_ids=cpp_process_mesh.process_ids,
         )
     py_dist_attr.dims_mapping = cpp_dist_attr.dims_mapping
-    py_dist_attr._is_annotated = cpp_dist_attr.annotated
+    py_dist_attr.annotated = cpp_dist_attr.annotated
 
 
 def _copy_op_dist_attr_to_cpp(cpp_dist_attr, py_dist_attr):
@@ -2095,7 +2106,8 @@ def _copy_op_dist_attr_to_cpp(cpp_dist_attr, py_dist_attr):
         )
     cpp_dist_attr.impl_type = py_dist_attr.impl_type
     cpp_dist_attr.impl_idx = py_dist_attr.impl_idx
-    cpp_dist_attr.annotated = py_dist_attr._is_annotated
+    cpp_dist_attr.is_recompute = py_dist_attr.is_recompute
+    cpp_dist_attr.annotated = py_dist_attr.annotated
     for name, py_tensor_dist_attr in py_dist_attr.inputs_dist_attrs.items():
         cpp_tensor_dist_attr = cpp_dist_attr.get_input_dist_attr(name)
         _copy_tensor_dist_attr_to_cpp(cpp_tensor_dist_attr, py_tensor_dist_attr)
@@ -2108,15 +2120,15 @@ def _copy_op_dist_attr_from_cpp(cpp_dist_attr, py_dist_attr):
     from .process_mesh import ProcessMesh
 
     cpp_process_mesh = cpp_dist_attr.process_mesh
-    if not cpp_process_mesh.empty():
+    if cpp_process_mesh is not None:
         py_dist_attr.process_mesh = ProcessMesh(
             shape=cpp_process_mesh.shape,
             process_ids=cpp_process_mesh.process_ids,
         )
     py_dist_attr.impl_type = cpp_dist_attr.impl_type
     py_dist_attr.impl_idx = cpp_dist_attr.impl_idx
-    py_dist_attr._is_annotated = cpp_dist_attr.annotated
-    py_dist_attr.op_type = cpp_dist_attr.op.type()
+    py_dist_attr.is_recompute = cpp_dist_attr.is_recompute
+    py_dist_attr.annotated = cpp_dist_attr.annotated
     for name, cpp_tensor_dist_attr in cpp_dist_attr.inputs_dist_attrs.items():
         py_tensor_dist_attr = py_dist_attr.get_input_dist_attr(name)
         _copy_tensor_dist_attr_from_cpp(
@@ -2185,6 +2197,7 @@ def insert_dependencies_for_two_ops(
     dist_context,
     is_recompute=False,
     sync=False,
+    op_namescope=None,
 ):
     """
     dependency: prior_op should be run before posterior_op
@@ -2229,57 +2242,100 @@ def insert_dependencies_for_two_ops(
         [block.var(name) for name in posterior_op.input_arg_names]
     )
 
-    return insert_dependencies_for_two_vars(
+    return insert_dependencies_for_vars(
         block,
         idx,
         first_var,
         second_var,
         dist_context,
         OpRole.Backward,
-        prior_op_mesh,
-        is_recompute,
-        sync,
+        process_mesh=prior_op_mesh,
+        is_recompute=is_recompute,
+        sync=sync,
+        op_namescope=op_namescope,
+        use_nop=False,
     )
 
 
-def insert_dependencies_for_two_vars(
+def insert_dependencies_for_vars(
     block,
     idx,
-    prior_var,
-    post_var,
+    prior_vars,
+    post_vars,
     dist_context,
     oprole,
     process_mesh=None,
     is_recompute=False,
     sync=False,
+    op_namescope=None,
+    use_nop=False,
 ):
     """
-    dependency: op that generates prior_var should be run before op that generates post_var
+    dependency: op that generates prior_vars should be run before op that generates post_vars
     """
-    assert block.has_var(prior_var.name)
-    assert block.has_var(post_var.name)
+
+    if isinstance(prior_vars, Variable):
+        prior_vars = [prior_vars]
+    if isinstance(post_vars, Variable):
+        post_vars = [post_vars]
+    for prior_var in prior_vars:
+        assert block.has_var(prior_var.name)
+    for post_var in post_vars:
+        assert block.has_var(post_var.name)
+
     if process_mesh is None:
         process_mesh = dist_context.get_tensor_dist_attr_for_program(
-            post_var
+            post_vars[0]
         ).process_mesh
     assert process_mesh is not None
 
-    depend_op = block._insert_op_without_sync(
-        idx,
-        type='nop',
-        inputs={
-            "X": prior_var,
-        },
-        outputs={"Out": post_var},
-    )
-    # depend_op.desc.set_type("depend")
+    use_nop = True
+    if use_nop:
+        depend_op = block._insert_op_without_sync(
+            idx,
+            type='nop',
+            inputs={
+                "X": prior_vars,
+            },
+            outputs={"Out": post_vars},
+        )
+    else:
+        depend_op = block._insert_op_without_sync(
+            idx,
+            type='depend',
+            inputs={
+                "X": post_vars,
+                "Dep": prior_vars,
+            },
+            outputs={"Out": post_vars},
+        )
     depend_op._set_attr(OP_ROLE_KEY, oprole)
-    # depend_op.desc.set_input("Dep", [first_var.name])
-    # self.desc.set_output(out_proto.name, out_arg_names)
 
-    naive_set_dist_op_attr_for_program_by_mesh(
-        depend_op, process_mesh, dist_context, is_recompute
-    )
+    # TODO: condition can be removed when add correct dist_attr for coalesce vars and ops in sharding_pass
+    if is_recompute or process_mesh != [-1]:
+        depend_op_dist_attr = OperatorDistAttr()
+        depend_op_dist_attr.impl_idx = 0
+        depend_op_dist_attr.impl_type = "default"
+        depend_op_dist_attr.process_mesh = process_mesh
+        depend_op_dist_attr.is_recompute = is_recompute
+        for input_varname in depend_op.desc.input_arg_names():
+            var = block.var(input_varname)
+            mapping = dist_context.get_tensor_dist_attr_for_program(
+                var
+            ).dims_mapping
+            depend_op_dist_attr.set_input_dims_mapping(input_varname, mapping)
+        for output_varname in depend_op.desc.output_arg_names():
+            var = block.var(output_varname)
+            mapping = dist_context.get_tensor_dist_attr_for_program(
+                var
+            ).dims_mapping
+            depend_op_dist_attr.set_output_dims_mapping(output_varname, mapping)
+        dist_context.set_op_dist_attr_for_program(
+            depend_op, depend_op_dist_attr
+        )
+
+    if op_namescope is not None:
+        depend_op._set_attr('op_namescope', f"/{op_namescope}")
 
     if sync:
         block._sync_with_cpp()
@@ -2287,11 +2343,8 @@ def insert_dependencies_for_two_vars(
     return depend_op
 
 
-def use_standalone_executor():
-    return os.environ.get('FLAGS_CONVERT_GRAPH_TO_PROGRAM', None) in [
-        1,
-        '1',
-        True,
-        'True',
-        'true',
-    ]
+def is_dep_skip_op(op):
+    if "c_" in op.type:
+        return True
+
+    return False

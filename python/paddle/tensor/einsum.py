@@ -20,10 +20,10 @@ import string
 import numpy as np
 import opt_einsum
 
-from paddle import _C_ops, _legacy_C_ops
+from paddle import _C_ops
 
 from ..fluid.data_feeder import check_type, check_variable_and_dtype
-from ..fluid.framework import _in_legacy_dygraph, in_dygraph_mode
+from ..fluid.framework import in_dygraph_mode
 from ..fluid.layer_helper import LayerHelper
 from .linalg import matmul, transpose
 from .manipulation import reshape, squeeze, unsqueeze
@@ -59,9 +59,7 @@ def parse_op_labels(labelstr, operand):
         labelstr.replace('...', '', 1).find('.') == -1
     ), "Invalid equation: `.` is found outside of an ellipsis."
 
-    # Check shape. Note, in Paddle a tensor rank is always nonzero
     ndims = len(operand.shape)
-    assert ndims > 0
 
     full_labelstr = labelstr.replace('...', '.' * (ndims - len(labelstr) + 3))
 
@@ -234,7 +232,7 @@ def build_global_view(nop_labels, rhs, n_bcast_dims):
 
     g_labels_sum = ''.join(labels)
     g_labels = g_labels_out + g_labels_sum
-    g_view = list(map(lambda i: build_view(i, g_labels), nop_labels))
+    g_view = [build_view(i, g_labels) for i in nop_labels]
     g_nout = len(g_labels_out)
     g_count = count
 
@@ -339,7 +337,7 @@ def plan_matmul(plan, g_view, op1, op2, g_supports, g_shape, I, J1, J2, K):
     # Then apply matmul(x, y, transpose_x=False, tranpose_y=True)
     var1, var2 = f'op{op1}', f'op{op2}'
 
-    op1_view, op2_view = [g_view[op] for op in (op1, op2)]
+    op1_view, op2_view = (g_view[op] for op in (op1, op2))
 
     I1 = [idx for idx in I if op1_view[idx] >= 0]
     I2 = [idx for idx in I if op2_view[idx] >= 0]
@@ -349,7 +347,7 @@ def plan_matmul(plan, g_view, op1, op2, g_supports, g_shape, I, J1, J2, K):
     op2_view = np.array(op2_view)
     op2_dims = op2_view[I2 + J2 + K]
 
-    op1_mask, op2_mask = [g_supports[op] for op in (op1, op2)]
+    op1_mask, op2_mask = (g_supports[op] for op in (op1, op2))
     op1_vshape = np.array([s if m else 1 for s, m in zip(g_shape, op1_mask)])
     op2_vshape = np.array([s if m else 1 for s, m in zip(g_shape, op2_mask)])
     vshape = np.maximum(op1_vshape, op2_vshape)
@@ -743,20 +741,25 @@ def parse_fake_shape(equation, operands, labels):
     list of shape
 
     """
+    origin_labels = (x.strip() for x in equation.split(','))
     shaped = collections.namedtuple('shaped', ['shape'])
 
-    def fake_shape(label, op):
+    def fake_shape(ori_label, label, op):
+        """
+        1. ori_label is the original labels, not aligned by '....'
+        2. if the '...' is evalulated to empty list, there is no '.' in label
+        """
         assert len(op.shape) == len(label), (
             "length of shape and length of label must be the same, but received %d != %d"
             % (len(op.shape), len(label))
         )
         fakes = [s for i, (l, s) in enumerate(zip(label, op.shape)) if l != '.']
         fakes = list(map(abs, fakes))  # make -1 -> 1
-        if '.' in label:
-            fakes.insert(label.index('.'), 1)
+        if '.' in ori_label:
+            fakes.insert(ori_label.index('.'), 1)
         return shaped(fakes)
 
-    out = list(map(fake_shape, labels, operands))
+    out = list(map(fake_shape, origin_labels, labels, operands))
     return out
 
 
@@ -782,7 +785,7 @@ def gen_equation_for_opteinsum(lhs, rhs):
             if c not in used:
                 return c
         raise ValueError(
-            "You have used all `a` - `z`, there can't find a unused for einsum optimization"
+            "You have used all `a` - `z`, there can't find a unused char for einsum optimization"
         )
 
     cnt = collections.Counter(lhs)
@@ -829,38 +832,35 @@ def gen_einsum_op(equation, *operands):
     """
     EinsumOp Python Interface:
     """
-    assert len(operands) <= 2, "Only support two operands in EinsumOp."
+
     if in_dygraph_mode():
         return _C_ops.einsum(operands, equation)[0]
-
-    if _in_legacy_dygraph():
-        # dygraph
-        return _legacy_C_ops.einsum(
-            operands, len(operands), len(operands), 'equation', equation
-        )[0]
-
-    for inp in operands:
-        check_variable_and_dtype(inp, 'dtype', ['float32', 'float64'], 'einsum')
-    check_type(equation, 'equation', str, 'einsum')
-    helper = LayerHelper('einsum', **locals())
-    out = helper.create_variable_for_type_inference(dtype=operands[0].dtype)
-    attrs = dict()
-    attrs['equation'] = equation
-    caches = [
-        helper.create_variable_for_type_inference(dtype=operands[0].dtype)
-        for i in range(len(operands))
-    ]
-    xshape = [
-        helper.create_variable_for_type_inference(dtype=operands[0].dtype)
-        for i in range(len(operands))
-    ]
-    helper.append_op(
-        type='einsum',
-        inputs={'Operands': operands},
-        outputs={'Out': out, "InnerCache": caches, "XShape": xshape},
-        attrs=attrs,
-    )
-    return out
+    else:
+        assert len(operands) <= 2, "Only support two operands in EinsumOp."
+        for inp in operands:
+            check_variable_and_dtype(
+                inp, 'dtype', ['float32', 'float64'], 'einsum'
+            )
+        check_type(equation, 'equation', str, 'einsum')
+        helper = LayerHelper('einsum', **locals())
+        out = helper.create_variable_for_type_inference(dtype=operands[0].dtype)
+        attrs = {}
+        attrs['equation'] = equation
+        caches = [
+            helper.create_variable_for_type_inference(dtype=operands[0].dtype)
+            for i in range(len(operands))
+        ]
+        xshape = [
+            helper.create_variable_for_type_inference(dtype=operands[0].dtype)
+            for i in range(len(operands))
+        ]
+        helper.append_op(
+            type='einsum',
+            inputs={'Operands': operands},
+            outputs={'Out': out, "InnerCache": caches, "XShape": xshape},
+            attrs=attrs,
+        )
+        return out
 
 
 def einsum(equation, *operands):
@@ -1047,7 +1047,7 @@ def einsum(equation, *operands):
     # To handle broadcasting, we should first know how many dimensions are there
     # We need to use that number to generate output labels
     # e.g. 1 for ['ij', 'i.', '.k']
-    n_bcast_dims = max(map(lambda s: s.count('.'), nop_labels))
+    n_bcast_dims = max(s.count('.') for s in nop_labels)
 
     # Build the data structures for planning. It's helpful to think of all the operands
     # broadcasting together from a global view. In this view, dimensions from multiple

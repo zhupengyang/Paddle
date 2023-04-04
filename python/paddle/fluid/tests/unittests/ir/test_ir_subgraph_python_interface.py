@@ -15,12 +15,11 @@
 import unittest
 
 import paddle
-import paddle.fluid as fluid
-import paddle.fluid.layers as layers
+from paddle import fluid
 from paddle.fluid import core
-from paddle.fluid.contrib.slim.quantization import QuantizationTransformPass
 from paddle.fluid.framework import IrGraph, Program, program_guard
-from paddle.fluid.tests.unittests.op_test import OpTestTool
+from paddle.fluid.tests.unittests.eager_op_test import OpTestTool
+from paddle.static.quantization import QuantizationTransformPass
 
 paddle.enable_static()
 
@@ -28,13 +27,17 @@ paddle.enable_static()
 class TestQuantizationSubGraph(unittest.TestCase):
     def build_graph_with_sub_graph(self):
         def linear_fc(num):
-            data = fluid.layers.data(
-                name='image', shape=[1, 32, 32], dtype='float32'
+            data = paddle.static.data(
+                name='image', shape=[-1, 1, 32, 32], dtype='float32'
             )
-            label = fluid.layers.data(name='label', shape=[1], dtype='int64')
+            label = paddle.static.data(
+                name='label', shape=[-1, 1], dtype='int64'
+            )
             hidden = data
             for _ in range(num):
-                hidden = fluid.layers.fc(hidden, size=128, act='relu')
+                hidden = paddle.static.nn.fc(
+                    hidden, size=128, activation='relu'
+                )
             loss = paddle.nn.functional.cross_entropy(
                 input=hidden, label=label, reduction='none', use_softmax=False
             )
@@ -51,8 +54,12 @@ class TestQuantizationSubGraph(unittest.TestCase):
             return linear_fc(5)
 
         with program_guard(main_program, startup_program):
-            x = layers.fill_constant(shape=[1], dtype='float32', value=0.1)
-            y = layers.fill_constant(shape=[1], dtype='float32', value=0.23)
+            x = paddle.tensor.fill_constant(
+                shape=[1], dtype='float32', value=0.1
+            )
+            y = paddle.tensor.fill_constant(
+                shape=[1], dtype='float32', value=0.23
+            )
             pred = paddle.less_than(y, x)
             out = paddle.static.nn.cond(pred, true_func, false_func)
 

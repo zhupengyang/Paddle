@@ -15,19 +15,29 @@
 import unittest
 
 import numpy as np
-from op_test import OpTest
+from eager_op_test import OpTest
+from op import Operator
 
 import paddle
-import paddle.fluid as fluid
-import paddle.fluid.core as core
-from paddle.fluid.op import Operator
+from paddle import fluid
+from paddle.fluid import core
 
 paddle.enable_static()
+
+
+def sgd_wrapper(
+    param, learning_rate, grad, master_param=None, multi_precision=False
+):
+    paddle._C_ops.sgd_(
+        param, learning_rate, grad, master_param, multi_precision
+    )
 
 
 class TestSGDOp(OpTest):
     def setUp(self):
         self.op_type = "sgd"
+        self.python_api = sgd_wrapper
+        self.python_out_sig = ['Out']
         self.conf()
         w = np.random.random((self.h, self.w)).astype("float32")
         g = np.random.random((self.h, self.w)).astype("float32")
@@ -196,11 +206,13 @@ class TestSGDOpOptimizeSelectedRows(unittest.TestCase):
 class TestSGDOpWithLargeInput(unittest.TestCase):
     def runTest(self):
         paddle.enable_static()
-        data = fluid.layers.fill_constant(shape=[1], value=128, dtype='int64')
-        label = fluid.layers.fill_constant(
+        data = paddle.tensor.fill_constant(shape=[1], value=128, dtype='int64')
+        label = paddle.tensor.fill_constant(
             shape=[1, 150], value=0.5, dtype='float32'
         )
-        emb = fluid.embedding(input=data, size=(10000000, 150), dtype='float32')
+        emb = paddle.static.nn.embedding(
+            input=data, size=(10000000, 150), dtype='float32'
+        )
         out = paddle.nn.functional.normalize(x=emb, axis=-1)
 
         cost = paddle.nn.functional.square_error_cost(input=out, label=label)
@@ -401,7 +413,7 @@ class TestSGDMultiPrecision2_0(unittest.TestCase):
                 rtol=1e-05,
                 atol=0.1,
             )
-        "Test static mode"
+        "Test static graph mode"
         output1_st = self.static_sgd_mp(mp=True)
         output2_st = self.static_sgd_mp(mp=False)
         for idx in range(len(output1_st)):
@@ -511,7 +523,7 @@ class TestSGDMultiPrecision1_0(unittest.TestCase):
                 rtol=1e-05,
                 atol=0.1,
             )
-        "Test static mode"
+        "Test static graph mode"
         output1_st = self.static_sgd_mp(mp=True)
         output2_st = self.static_sgd_mp(mp=False)
         for idx in range(len(output1_st)):

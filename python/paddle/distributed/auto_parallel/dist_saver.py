@@ -21,8 +21,7 @@ import re
 import numpy as np
 
 import paddle
-from paddle import fluid
-from paddle.fluid import core
+from paddle.framework import core
 
 from ..utils.log_utils import get_logger
 from .process_group import _g_process_group_map
@@ -104,9 +103,7 @@ class DistributedSaver:
         def _load_file(filename, dirname, suffix="pdparams"):
             file_list = []
             for file in os.listdir(dirname):
-                if check_filename(
-                    '{}(.*)_dist(.*).{}'.format(filename, suffix), file
-                ):
+                if check_filename(f'{filename}(.*)_dist(.*).{suffix}', file):
                     file_list.append(os.path.join(dirname, file))
             file_list.sort()
             return file_list
@@ -122,7 +119,7 @@ class DistributedSaver:
                         state_dict[name].append(np.array(value))
                     else:
                         state_dict[name] = [np.array(value)]
-            self._logger.info("Load param file: {}".format(file_list))
+            self._logger.info(f"Load param file: {file_list}")
             return state_dict
 
         filename = os.path.basename(path)
@@ -142,7 +139,7 @@ class DistributedSaver:
         # load path.pdattr
         dist_attr_file_list = _load_file(filename, dirname, "pdattr")
         self._logger.info(
-            "Load distributed attribute file: {}".format(dist_attr_file_list)
+            f"Load distributed attribute file: {dist_attr_file_list}"
         )
         dist_attr = {}
         for dist_attr_file in dist_attr_file_list:
@@ -167,12 +164,12 @@ class DistributedSaver:
 
         dist_main_prog = kwargs.get('program', None)
         if not dist_main_prog:
-            dist_main_prog = fluid.default_main_program()
+            dist_main_prog = paddle.static.default_main_program()
         global_block = dist_main_prog.global_block()
 
         ops = global_block.ops
-        feed_vars_names = list(map(lambda x: x.name, feed_vars))
-        fetch_vars_names = list(map(lambda x: x.name, fetch_vars))
+        feed_vars_names = [x.name for x in feed_vars]
+        fetch_vars_names = [x.name for x in fetch_vars]
 
         last_idx = -1
         for idx, op in enumerate(ops):
@@ -202,7 +199,9 @@ class DistributedSaver:
             if var_name not in used_outputs:
                 fetch_vars_names.pop(idx)
 
-        dist_feed_vars = [global_block.vars[name] for name in feed_vars_names]
+        dist_feed_vars = list(
+            reversed([global_block.vars[name] for name in feed_vars_names])
+        )
         dist_fetch_vars = [global_block.vars[name] for name in fetch_vars_names]
 
         dist_filename = filename + "_dist" + str(rank_id)

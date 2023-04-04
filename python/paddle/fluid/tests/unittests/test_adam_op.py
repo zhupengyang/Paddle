@@ -15,18 +15,55 @@
 import unittest
 
 import numpy as np
-from op_test import OpTest
+from eager_op_test import OpTest
+from op import Operator
 
 import paddle
-import paddle.fluid as fluid
+from paddle import fluid
 from paddle.fluid import core
-from paddle.fluid.op import Operator
+
+
+def adam_wrapper(
+    param,
+    grad,
+    LearningRate,
+    moment1,
+    moment2,
+    beta1_pow,
+    beta2_pow,
+    master_weight=None,
+    find_inf=None,
+    beta1=0.78,
+    beta2=0.836,
+    epsilon=1e-4,
+    lazy_mode=False,
+):
+    _, _, _, _, _, _ = paddle._C_ops.adam_(
+        param,
+        grad,
+        LearningRate,
+        moment1,
+        moment2,
+        beta1_pow,
+        beta2_pow,
+        master_weight,
+        find_inf,
+        beta1,
+        beta2,
+        epsilon,
+        lazy_mode,
+        1000,
+        False,
+        False,
+    )
 
 
 class TestAdamOp1(OpTest):
     def setUp(self):
         '''Test Adam Op with supplied attributes'''
         self.op_type = "adam"
+        self.python_api = adam_wrapper
+        self.python_out_sig = ['Out']
         param = np.random.uniform(-1, 1, (102, 105)).astype("float32")
         grad = np.random.uniform(-1, 1, (102, 105)).astype("float32")
         moment1 = np.random.uniform(-1, 1, (102, 105)).astype("float32")
@@ -73,6 +110,8 @@ class TestAdamOp2(OpTest):
     def setUp(self):
         '''Test Adam Op with supplied attributes'''
         self.op_type = "adam"
+        self.python_api = adam_wrapper
+        self.python_out_sig = ['Out']
         self.set_shape()
         param = np.random.uniform(-1, 1, self.shape).astype("float32")
         grad = np.random.uniform(-1, 1, self.shape).astype("float32")
@@ -122,6 +161,8 @@ class TestAdamOpMultipleSteps(OpTest):
     def setUp(self):
         '''Test Adam Operator with supplied attributes'''
         self.op_type = "adam"
+        self.python_api = adam_wrapper
+        self.python_out_sig = ['Out']
         self.num_steps = 10
 
         param = np.random.uniform(-1, 1, (102, 105)).astype("float32")
@@ -373,7 +414,7 @@ class TestSparseAdamOp(unittest.TestCase):
         scope = core.Scope()
         self.setup(scope, place, lazy_mode)
 
-        op_args = dict()
+        op_args = {}
         op_args['lazy_mode'] = lazy_mode
         for key, np_array in self.dense_inputs.items():
             var = scope.var(key).get_tensor()
@@ -414,6 +455,8 @@ class TestAdamOpBetaVariable(OpTest):
     def setUp(self):
         '''Test Adam Op with beta as Variable'''
         self.op_type = "adam"
+        self.python_api = adam_wrapper
+        self.python_out_sig = ['Out']
         param = np.random.uniform(-1, 1, (102, 105)).astype("float32")
         grad = np.random.uniform(-1, 1, (102, 105)).astype("float32")
         moment1 = np.random.uniform(-1, 1, (102, 105)).astype("float32")
@@ -459,6 +502,8 @@ class TestAdamOpBetaEpsilonVariable(OpTest):
     def setUp(self):
         '''Test Adam Op with beta/epsilon as Variable'''
         self.op_type = "adam"
+        self.python_api = adam_wrapper
+        self.python_out_sig = ['Out']
         param = np.random.uniform(-1, 1, (102, 105)).astype("float32")
         grad = np.random.uniform(-1, 1, (102, 105)).astype("float32")
         moment1 = np.random.uniform(-1, 1, (102, 105)).astype("float32")
@@ -505,6 +550,8 @@ class TestAdamOpWithGlobalBetaPow(OpTest):
     def setUp(self):
         '''Test Adam Op with global_beta_pow'''
         self.op_type = "adam"
+        self.python_api = adam_wrapper
+        self.python_out_sig = ['Out']
         param = np.random.uniform(-1, 1, (102, 105)).astype("float32")
         grad = np.random.uniform(-1, 1, (102, 105)).astype("float32")
         moment1 = np.random.uniform(-1, 1, (102, 105)).astype("float32")
@@ -554,6 +601,8 @@ class TestAdamOpWithSkipUpdate(OpTest):
     def setUp(self):
         '''Test Adam Op with global_beta_pow'''
         self.op_type = "adam"
+        self.python_api = adam_wrapper
+        self.python_out_sig = ['Out']
         param = np.random.uniform(-1, 1, (102, 105)).astype("float32")
         grad = np.random.uniform(-1, 1, (102, 105)).astype("float32")
         moment1 = np.random.uniform(-1, 1, (102, 105)).astype("float32")
@@ -607,7 +656,7 @@ class TestAdamOpV2(unittest.TestCase):
         startup = fluid.Program()
         with fluid.program_guard(train_prog, startup):
             with fluid.unique_name.guard():
-                data = fluid.data(name="data", shape=shape)
+                data = paddle.static.data(name="data", shape=shape)
                 conv = paddle.static.nn.conv2d(data, 8, 3)
                 loss = paddle.mean(conv)
 
@@ -686,7 +735,7 @@ class TestAdamOpV2(unittest.TestCase):
         value = np.arange(26).reshape(2, 13).astype("float32")
         a = fluid.dygraph.to_variable(value)
         linear = paddle.nn.Linear(13, 5)
-        clip = fluid.clip.GradientClipByGlobalNorm(clip_norm=1.0)
+        clip = paddle.nn.ClipGradByGlobalNorm(clip_norm=1.0)
         adam = paddle.optimizer.Adam(
             0.1, parameters=linear.parameters(), grad_clip=clip
         )
@@ -767,12 +816,12 @@ class TestAdamOptimizer(unittest.TestCase):
         label_np = np.random.randint(2, size=(2, 1)).astype('int64')
         weight_attr1 = paddle.ParamAttr(
             name="weight1",
-            initializer=fluid.initializer.Constant(value=1.0),
+            initializer=paddle.nn.initializer.Constant(value=1.0),
             trainable=True,
         )
         weight_attr2 = paddle.ParamAttr(
             name="weight2",
-            initializer=fluid.initializer.Constant(value=2.0),
+            initializer=paddle.nn.initializer.Constant(value=2.0),
             trainable=True,
         )
         clip = paddle.nn.ClipGradByGlobalNorm(clip_norm=1.0)
@@ -788,9 +837,14 @@ class TestAdamOptimizer(unittest.TestCase):
                 sum = paddle.add(a, b)
                 z = paddle.pow(sum, 2.0)
 
-                fc_1 = fluid.layers.fc(input=z, size=2, param_attr=weight_attr1)
-                prediction = fluid.layers.fc(
-                    input=fc_1, size=2, param_attr=weight_attr2, act='softmax'
+                fc_1 = paddle.static.nn.fc(
+                    x=z, size=2, weight_attr=weight_attr1
+                )
+                prediction = paddle.static.nn.fc(
+                    x=fc_1,
+                    size=2,
+                    weight_attr=weight_attr2,
+                    activation='softmax',
                 )
 
                 cost = paddle.nn.functional.cross_entropy(
@@ -872,7 +926,7 @@ class TestAdamOptimizer(unittest.TestCase):
             exe = paddle.static.Executor(place)
             exe.run(startup_prog)
 
-            print("Start run on {}".format(place))
+            print(f"Start run on {place}")
             for epoch in range(10):
                 pred_res, loss_res = exe.run(
                     main_prog,
@@ -921,18 +975,16 @@ class TestAdamOptimizer(unittest.TestCase):
         main = fluid.Program()
         weight_attr = paddle.ParamAttr(
             name="weight1",
-            initializer=fluid.initializer.Constant(value=1.0),
+            initializer=paddle.nn.initializer.Constant(value=1.0),
             regularizer=fluid.regularizer.L1DecayRegularizer(
                 regularization_coeff=0.1
             ),
             trainable=True,
         )
         with fluid.program_guard(main):
-            x = fluid.data(name='x', shape=[None, 13], dtype='float32')
-            y = fluid.data(name='y', shape=[None, 1], dtype='float32')
-            y_predict = fluid.layers.fc(
-                input=x, size=1, act=None, param_attr=weight_attr
-            )
+            x = paddle.static.data(name='x', shape=[None, 13], dtype='float32')
+            y = paddle.static.data(name='y', shape=[None, 1], dtype='float32')
+            y_predict = paddle.static.nn.fc(x, size=1, weight_attr=weight_attr)
             cost = paddle.nn.functional.square_error_cost(
                 input=y_predict, label=y
             )
@@ -955,8 +1007,8 @@ class TestAdamOptimizer(unittest.TestCase):
         sum = paddle.add(a, b)
         z = paddle.pow(sum, 2.0)
 
-        fc_1 = fluid.layers.fc(input=z, size=128)
-        prediction = fluid.layers.fc(input=fc_1, size=2, act='softmax')
+        fc_1 = paddle.static.nn.fc(x=z, size=128)
+        prediction = paddle.static.nn.fc(x=fc_1, size=2, activation='softmax')
 
         cost = paddle.nn.functional.cross_entropy(
             input=prediction, label=label, reduction='none', use_softmax=False
@@ -983,7 +1035,7 @@ class TestAdamOptimizer(unittest.TestCase):
         linear = paddle.nn.Linear(10, 10)
         b = linear(a)
         state_dict = linear.state_dict()
-        fluid.save_dygraph(state_dict, "paddle_dy")
+        paddle.save(state_dict, "paddle_dy.pdparams")
 
         scheduler = paddle.optimizer.lr.NoamDecay(
             d_model=0.01, warmup_steps=100, verbose=True
@@ -995,8 +1047,9 @@ class TestAdamOptimizer(unittest.TestCase):
         )
         adam.minimize(b)
         state_dict = adam.state_dict()
-        fluid.save_dygraph(state_dict, "paddle_dy")
-        para_state_dict, opt_state_dict = fluid.load_dygraph("paddle_dy")
+        paddle.save(state_dict, "paddle_dy.pdopt")
+        para_state_dict = paddle.load("paddle_dy.pdparams")
+        opt_state_dict = paddle.load("paddle_dy.pdopt")
         adam.set_state_dict(opt_state_dict)
 
         paddle.enable_static()
@@ -1011,7 +1064,7 @@ class TestAdamOptimizer(unittest.TestCase):
                 linear = paddle.nn.Linear(10, 10)
                 b = linear(a)
                 state_dict = linear.state_dict()
-                fluid.save_dygraph(state_dict, "paddle_dy")
+                paddle.save(state_dict, "paddle_dy.pdparams")
 
                 scheduler = paddle.optimizer.lr.NoamDecay(
                     d_model=0.01, warmup_steps=100, verbose=True
@@ -1027,8 +1080,9 @@ class TestAdamOptimizer(unittest.TestCase):
         adam = get_opt('float32', [10, 10])
 
         state_dict = adam.state_dict()
-        fluid.save_dygraph(state_dict, "paddle_dy")
-        para_state_dict, opt_state_dict = fluid.load_dygraph("paddle_dy")
+        paddle.save(state_dict, "paddle_dy.pdopt")
+        para_state_dict = paddle.load("paddle_dy.pdparams")
+        opt_state_dict = paddle.load("paddle_dy.pdopt")
         adam.set_state_dict(opt_state_dict)
 
         adam2 = get_opt('float64', [10, 10])  # dtype not match
@@ -1212,7 +1266,7 @@ class TestMultiTensorAdam(unittest.TestCase):
             np.testing.assert_allclose(
                 params_dygraph1[idx], params_dygraph2[idx], rtol=1e-05
             )
-        # test static mode
+        # test static graph mode
         output_static1 = self._adam_optimize_static(
             place=place, use_amp=use_amp, use_multi_tensor=True
         )

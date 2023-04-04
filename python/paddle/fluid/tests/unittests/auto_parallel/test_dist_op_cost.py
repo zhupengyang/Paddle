@@ -98,7 +98,7 @@ class TestDistOpCost(unittest.TestCase):
             ):
                 dist_op = dist_context.get_dist_op_for_program(op)
                 op_dist_attr = dist_op.dist_attr
-                processes = op_dist_attr.process_mesh.processes
+                processes = op_dist_attr.process_mesh.process_ids
                 if is_elementwise_op(op.type):
                     container = get_distributed_operator_impl_container(
                         "elementwise"
@@ -178,6 +178,7 @@ class TestDistOpCost(unittest.TestCase):
                     [None, None],
                 )
                 tmp_out = paddle.matmul(out1, tmp_param)
+                tmp_out = paddle.scale(tmp_out, 0.5)
                 out2 = paddle.matmul(tmp_out, param2)  # [8, 4] [-1, 0]
 
                 out8 = paddle.transpose(out2, [1, 0])  # [4, 8] [0, -1]
@@ -205,7 +206,7 @@ class TestDistOpCost(unittest.TestCase):
         for idx, op in enumerate(ops):
             dist_op = dist_context.get_dist_op_for_program(op)
             op_dist_attr = dist_op.dist_attr
-            processes = op_dist_attr.process_mesh.processes
+            processes = op_dist_attr.process_mesh.process_ids
             if is_elementwise_op(op.type):
                 container = get_distributed_operator_impl_container(
                     "elementwise"
@@ -286,6 +287,7 @@ class TestDistOpCost(unittest.TestCase):
                 )
 
                 tmp_out = paddle.matmul(out1, tmp_param)
+                tmp_out = paddle.scale(tmp_out, 0.5)
                 out2 = paddle.matmul(tmp_out, param2)  # [8, 4] [-1, 0]
 
                 out8 = paddle.transpose(out2, [1, 0])  # [4, 8] [0, -1]
@@ -313,7 +315,7 @@ class TestDistOpCost(unittest.TestCase):
         for idx, op in enumerate(ops):
             dist_op = dist_context.get_dist_op_for_program(op)
             op_dist_attr = dist_op.dist_attr
-            processes = op_dist_attr.process_mesh.processes
+            processes = op_dist_attr.process_mesh.process_ids
             if is_elementwise_op(op.type):
                 container = get_distributed_operator_impl_container(
                     "elementwise"
@@ -421,7 +423,7 @@ class TestDistOpCost(unittest.TestCase):
         for idx, op in enumerate(ops):
             dist_op = dist_context.get_dist_op_for_program(op)
             op_dist_attr = dist_op.dist_attr
-            processes = op_dist_attr.process_mesh.processes
+            processes = op_dist_attr.process_mesh.process_ids
             if is_elementwise_op(op.type):
                 container = get_distributed_operator_impl_container(
                     "elementwise"

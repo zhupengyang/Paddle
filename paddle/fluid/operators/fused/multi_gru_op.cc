@@ -18,7 +18,6 @@ limitations under the License. */
 #include <string>
 #include <vector>
 
-#include "paddle/fluid/operators/jit/kernels.h"
 #include "paddle/phi/kernels/funcs/blas/blas.h"
 #include "paddle/phi/kernels/funcs/fc_functor.h"
 #include "paddle/phi/kernels/funcs/sequence2batch.h"
@@ -138,13 +137,12 @@ void MultiGRUOp::InferShape(framework::InferShapeContext* ctx) const {
   ctx->ShareLoD("X", "Hidden");
 }
 
-framework::OpKernelType MultiGRUOp::GetExpectedKernelType(
+phi::KernelKey MultiGRUOp::GetExpectedKernelType(
     const framework::ExecutionContext& ctx) const {
-  return framework::OpKernelType(
-      OperatorWithKernel::IndicateVarDataType(ctx, "X"),
-      ctx.GetPlace(),
-      phi::DataLayout::ONEDNN,
-      framework::LibraryType::kMKLDNN);
+  return phi::KernelKey(phi::Backend::ONEDNN,
+                        phi::DataLayout::ONEDNN,
+                        phi::TransToPhiDataType(
+                            OperatorWithKernel::IndicateVarDataType(ctx, "X")));
 }
 
 void MultiGRUOpMaker::Make() {

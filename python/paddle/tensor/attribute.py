@@ -17,12 +17,12 @@
 import numpy as np
 
 import paddle
-from paddle import _C_ops, _legacy_C_ops
+from paddle import _C_ops
 
+from ..common_ops_import import Variable
 from ..fluid.data_feeder import check_type, check_variable_and_dtype
-from ..fluid.framework import _in_legacy_dygraph, in_dygraph_mode
+from ..fluid.framework import in_dygraph_mode
 from ..framework import LayerHelper, core
-from ..static import Variable
 from .creation import _complex_to_real_dtype, assign
 
 __all__ = []
@@ -92,7 +92,7 @@ def shape(input):
             import paddle
             paddle.enable_static()
 
-            inputs = fluid.data(name="x", shape=[3, 100, 100], dtype="float32")
+            inputs = paddle.static.data(name="x", shape=[3, 100, 100], dtype="float32")
             output = paddle.shape(inputs)
 
             exe = fluid.Executor(fluid.CPUPlace())
@@ -107,36 +107,32 @@ def shape(input):
         out = _C_ops.shape(input)
         out.stop_gradient = True
         return out
-    if _in_legacy_dygraph():
-        out = _legacy_C_ops.shape(input)
-        out.stop_gradient = True
+    else:
+        check_variable_and_dtype(
+            input,
+            'input',
+            [
+                'bool',
+                'float16',
+                'float32',
+                'float64',
+                'int32',
+                'int64',
+                'complex64',
+                'complex128',
+            ],
+            'shape',
+        )
+        helper = LayerHelper('shape', **locals())
+        out = helper.create_variable_for_type_inference(dtype='int32')
+        helper.append_op(
+            type='shape',
+            inputs={'Input': input},
+            outputs={'Out': out},
+            stop_gradient=True,
+        )
+
         return out
-
-    check_variable_and_dtype(
-        input,
-        'input',
-        [
-            'bool',
-            'float16',
-            'float32',
-            'float64',
-            'int32',
-            'int64',
-            'complex64',
-            'complex128',
-        ],
-        'shape',
-    )
-    helper = LayerHelper('shape', **locals())
-    out = helper.create_variable_for_type_inference(dtype='int32')
-    helper.append_op(
-        type='shape',
-        inputs={'Input': input},
-        outputs={'Out': out},
-        stop_gradient=True,
-    )
-
-    return out
 
 
 def is_complex(x):
@@ -166,9 +162,7 @@ def is_complex(x):
             # False
     """
     if not isinstance(x, (paddle.Tensor, paddle.static.Variable)):
-        raise TypeError(
-            "Expected Tensor, but received type of x: {}".format(type(x))
-        )
+        raise TypeError(f"Expected Tensor, but received type of x: {type(x)}")
     dtype = x.dtype
     is_complex_dtype = (
         dtype == core.VarDesc.VarType.COMPLEX64
@@ -200,9 +194,7 @@ def is_floating_point(x):
             # False
     """
     if not isinstance(x, (paddle.Tensor, paddle.static.Variable)):
-        raise TypeError(
-            "Expected Tensor, but received type of x: {}".format(type(x))
-        )
+        raise TypeError(f"Expected Tensor, but received type of x: {type(x)}")
     dtype = x.dtype
     is_fp_dtype = (
         dtype == core.VarDesc.VarType.FP32
@@ -240,9 +232,7 @@ def is_integer(x):
             # True
     """
     if not isinstance(x, (paddle.Tensor, paddle.static.Variable)):
-        raise TypeError(
-            "Expected Tensor, but received type of x: {}".format(type(x))
-        )
+        raise TypeError(f"Expected Tensor, but received type of x: {type(x)}")
     dtype = x.dtype
     is_int_dtype = (
         dtype == core.VarDesc.VarType.UINT8
@@ -289,16 +279,14 @@ def real(x, name=None):
     """
     if in_dygraph_mode():
         return _C_ops.real(x)
-    if _in_legacy_dygraph():
-        return _legacy_C_ops.real(x)
-
-    check_variable_and_dtype(x, 'x', ['complex64', 'complex128'], 'real')
-    helper = LayerHelper('real', **locals())
-    out = helper.create_variable_for_type_inference(
-        dtype=_complex_to_real_dtype(helper.input_dtype())
-    )
-    helper.append_op(type='real', inputs={'X': x}, outputs={'Out': out})
-    return out
+    else:
+        check_variable_and_dtype(x, 'x', ['complex64', 'complex128'], 'real')
+        helper = LayerHelper('real', **locals())
+        out = helper.create_variable_for_type_inference(
+            dtype=_complex_to_real_dtype(helper.input_dtype())
+        )
+        helper.append_op(type='real', inputs={'X': x}, outputs={'Out': out})
+        return out
 
 
 def imag(x, name=None):
@@ -336,13 +324,11 @@ def imag(x, name=None):
     """
     if in_dygraph_mode():
         return _C_ops.imag(x)
-    if _in_legacy_dygraph():
-        return _legacy_C_ops.imag(x)
-
-    check_variable_and_dtype(x, 'x', ['complex64', 'complex128'], 'imag')
-    helper = LayerHelper('imag', **locals())
-    out = helper.create_variable_for_type_inference(
-        dtype=_complex_to_real_dtype(helper.input_dtype())
-    )
-    helper.append_op(type='imag', inputs={'X': x}, outputs={'Out': out})
-    return out
+    else:
+        check_variable_and_dtype(x, 'x', ['complex64', 'complex128'], 'imag')
+        helper = LayerHelper('imag', **locals())
+        out = helper.create_variable_for_type_inference(
+            dtype=_complex_to_real_dtype(helper.input_dtype())
+        )
+        helper.append_op(type='imag', inputs={'X': x}, outputs={'Out': out})
+        return out

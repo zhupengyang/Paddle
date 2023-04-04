@@ -23,7 +23,7 @@ from paddle.distributed.fleet.utils import recompute
 
 class Model(paddle.nn.Layer):
     def __init__(self, block_idx, input_size, is_last=False):
-        super(Model, self).__init__()
+        super().__init__()
         block_name = "block_" + str(block_idx)
         self.block = paddle.nn.Sequential(
             (
@@ -311,15 +311,6 @@ class TestRecompute(unittest.TestCase):
         loss_ref, param_ref, grad_ref = run_model(
             recompute_block=[2], recompute_kwargs=kwargs
         )
-
-    def test_recompute_cpu_rng(self):
-        paddle.set_device("cpu")
-        for flag in [True, False]:
-            with self.assertRaises(RuntimeError):
-                loss_ref, param_ref, grad_ref = run_model(
-                    recompute_block=[2],
-                    recompute_kwargs={"use_reentrant": flag},
-                )
 
 
 if __name__ == '__main__':

@@ -105,10 +105,10 @@ class DensityPriorBoxOp : public framework::OperatorWithKernel {
   }
 
  protected:
-  framework::OpKernelType GetExpectedKernelType(
+  phi::KernelKey GetExpectedKernelType(
       const framework::ExecutionContext& ctx) const override {
-    return framework::OpKernelType(
-        OperatorWithKernel::IndicateVarDataType(ctx, "Input"), ctx.GetPlace());
+    return phi::KernelKey(OperatorWithKernel::IndicateVarDataType(ctx, "Input"),
+                          ctx.GetPlace());
   }
 };
 
@@ -262,6 +262,9 @@ REGISTER_OPERATOR(
     paddle::framework::EmptyGradOpMaker<paddle::framework::OpDesc>,
     paddle::framework::EmptyGradOpMaker<paddle::imperative::OpBase>);
 
-REGISTER_OP_CPU_KERNEL(density_prior_box,
-                       ops::DensityPriorBoxOpKernel<float>,
-                       ops::DensityPriorBoxOpKernel<double>);
+PD_REGISTER_STRUCT_KERNEL(density_prior_box,
+                          CPU,
+                          ALL_LAYOUT,
+                          ops::DensityPriorBoxOpKernel,
+                          float,
+                          double) {}

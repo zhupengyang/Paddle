@@ -26,12 +26,16 @@
 namespace phi {
 
 template <typename Context>
-void ReshapeKernel(const Context& dev_ctx,
-                   const DenseTensor& x,
-                   const IntArray& shape,
-                   DenseTensor* out) {
+void ReshapeInferKernel(const Context& dev_ctx,
+                        const DenseTensor& x,
+                        const IntArray& shape,
+                        DenseTensor* out) {
   MetaTensor meta_out(out);
   InferMetaFromVecValue(x, shape.GetData(), &meta_out);
+  // Zero-Size Tensor
+  if (x.numel() == 0) {
+    return;
+  }
   if (x.initialized() && x.Holder() == out->Holder()) {
     dev_ctx.Alloc(out, x.dtype());
     return;
@@ -47,10 +51,10 @@ void ReshapeKernel(const Context& dev_ctx,
 
 #ifdef PADDLE_WITH_XPU
 template <>
-void ReshapeKernel<phi::XPUContext>(const XPUContext& dev_ctx,
-                                    const DenseTensor& x,
-                                    const IntArray& shape,
-                                    DenseTensor* out) {
+void ReshapeInferKernel<phi::XPUContext>(const XPUContext& dev_ctx,
+                                         const DenseTensor& x,
+                                         const IntArray& shape,
+                                         DenseTensor* out) {
   MetaTensor meta_out(out);
   InferMetaFromVecValue(x, shape.GetData(), &meta_out);
   if (x.initialized() && x.Holder() == out->Holder()) {
@@ -61,7 +65,7 @@ void ReshapeKernel<phi::XPUContext>(const XPUContext& dev_ctx,
   auto dims = out->dims();
   auto* src_ptr = x.data();
   auto* dst_ptr = out->data();
-  auto size = x.numel() * paddle::experimental::SizeOf(x.dtype());
+  auto size = x.numel() * phi::SizeOf(x.dtype());
   int ret = xpu::copy(dev_ctx.x_context(),
                       reinterpret_cast<const int8_t*>(src_ptr),
                       reinterpret_cast<int8_t*>(dst_ptr),
@@ -73,40 +77,19 @@ void ReshapeKernel<phi::XPUContext>(const XPUContext& dev_ctx,
 #endif
 
 template <typename Context>
-void ReshapeWithXShape(const Context& dev_ctx,
-                       const DenseTensor& x,
-                       const IntArray& shape,
-                       DenseTensor* out,
-                       DenseTensor* xshape) {
-  ReshapeKernel(dev_ctx, x, shape, out);
+void ReshapeKernel(const Context& dev_ctx,
+                   const DenseTensor& x,
+                   const IntArray& shape,
+                   DenseTensor* out,
+                   DenseTensor* xshape) {
+  ReshapeInferKernel(dev_ctx, x, shape, out);
 }
 
 }  // namespace phi
 
-PD_REGISTER_GENERAL_KERNEL(
-    reshape, CPU, ALL_LAYOUT, phi::ReshapeKernel<phi::CPUContext>, ALL_DTYPE) {}
-PD_REGISTER_GENERAL_KERNEL(reshape_with_xshape,
-                           CPU,
-                           ALL_LAYOUT,
-                           phi::ReshapeWithXShape<phi::CPUContext>,
-                           ALL_DTYPE) {}
-
-#if defined(PADDLE_WITH_CUDA) || defined(PADDLE_WITH_HIP)
-PD_REGISTER_GENERAL_KERNEL(
-    reshape, GPU, ALL_LAYOUT, phi::ReshapeKernel<phi::GPUContext>, ALL_DTYPE) {}
-PD_REGISTER_GENERAL_KERNEL(reshape_with_xshape,
-                           GPU,
-                           ALL_LAYOUT,
-                           phi::ReshapeWithXShape<phi::GPUContext>,
-                           ALL_DTYPE) {}
-#endif
-
-#ifdef PADDLE_WITH_XPU
-PD_REGISTER_GENERAL_KERNEL(
-    reshape, XPU, ALL_LAYOUT, phi::ReshapeKernel<phi::XPUContext>, ALL_DTYPE) {}
-PD_REGISTER_GENERAL_KERNEL(reshape_with_xshape,
-                           XPU,
-                           ALL_LAYOUT,
-                           phi::ReshapeWithXShape<phi::XPUContext>,
-                           ALL_DTYPE) {}
-#endif
+PD_REGISTER_KERNEL_FOR_ALL_BACKEND_DTYPE(reshape_infer,
+                                         ALL_LAYOUT,
+                                         phi::ReshapeInferKernel) {}
+PD_REGISTER_KERNEL_FOR_ALL_BACKEND_DTYPE(reshape,
+                                         ALL_LAYOUT,
+                                         phi::ReshapeKernel) {}

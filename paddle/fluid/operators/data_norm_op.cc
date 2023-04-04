@@ -159,7 +159,7 @@ class DataNormOp : public framework::OperatorWithKernel {
   }
 
  protected:
-  framework::OpKernelType GetExpectedKernelType(
+  phi::KernelKey GetExpectedKernelType(
       const framework::ExecutionContext &ctx) const override {
     auto input_data_type = OperatorWithKernel::IndicateVarDataType(ctx, "X");
     // By default, the type of the scale, bias, mean,
@@ -195,7 +195,7 @@ class DataNormOp : public framework::OperatorWithKernel {
                             "bias input should be of float type"));
     }
 
-    return framework::OpKernelType(input_data_type, ctx.GetPlace());
+    return phi::KernelKey(input_data_type, ctx.GetPlace());
   }
 };
 
@@ -267,7 +267,7 @@ The required data format for this layer is one of the following:
 };
 
 template <typename T>
-class DataNormKernel<phi::CPUContext, T> : public framework::OpKernel<T> {
+class DataNormKernel<T, phi::CPUContext> : public framework::OpKernel<T> {
  public:
   void Compute(const framework::ExecutionContext &ctx) const override {
     // const bool is_test = ctx.Attr<bool>("is_test");
@@ -284,6 +284,16 @@ class DataNormKernel<phi::CPUContext, T> : public framework::OpKernel<T> {
     const int C =
         (data_layout == DataLayout::kNCHW ? x_dims[1]
                                           : x_dims[x_dims.size() - 1]);
+
+    PADDLE_ENFORCE_LT(0,
+                      N,
+                      platform::errors::InvalidArgument(
+                          "The dims of Input(X) should be greater than 0."));
+    PADDLE_ENFORCE_LT(0,
+                      C,
+                      platform::errors::InvalidArgument(
+                          "The dims of Input(X) should be greater than 0."));
+
     auto *y = ctx.Output<phi::DenseTensor>("Y");
     auto *mean_out = ctx.Output<phi::DenseTensor>("Means");
     auto *scales = ctx.Output<phi::DenseTensor>("Scales");
@@ -475,7 +485,7 @@ class DataNormGradOp : public framework::OperatorWithKernel {
   }
 
  protected:
-  framework::OpKernelType GetExpectedKernelType(
+  phi::KernelKey GetExpectedKernelType(
       const framework::ExecutionContext &ctx) const override {
     const auto *var = ctx.InputVar(framework::GradVarName("Y"));
     if (var == nullptr) {
@@ -494,12 +504,12 @@ class DataNormGradOp : public framework::OperatorWithKernel {
     }
 
     auto data_type = OperatorWithKernel::IndicateVarDataType(ctx, "X");
-    return framework::OpKernelType(data_type, ctx.GetPlace());
+    return phi::KernelKey(data_type, ctx.GetPlace());
   }
 };
 
 template <typename T>
-class DataNormGradKernel<phi::CPUContext, T> : public framework::OpKernel<T> {
+class DataNormGradKernel<T, phi::CPUContext> : public framework::OpKernel<T> {
  public:
   void Compute(const framework::ExecutionContext &ctx) const override {
     const auto *x = ctx.Input<phi::DenseTensor>("X");
@@ -754,12 +764,11 @@ REGISTER_OPERATOR(data_norm,
                   ops::DataNormGradMaker<paddle::imperative::OpBase>);
 REGISTER_OPERATOR(data_norm_grad, ops::DataNormGradOp);
 
-REGISTER_OP_CPU_KERNEL(data_norm,
-                       ops::DataNormKernel<phi::CPUContext, float>,
-                       ops::DataNormKernel<phi::CPUContext, double>);
-REGISTER_OP_CPU_KERNEL(data_norm_grad,
-                       ops::DataNormGradKernel<phi::CPUContext, float>,
-                       ops::DataNormGradKernel<phi::CPUContext, double>);
+PD_REGISTER_STRUCT_KERNEL(
+    data_norm, CPU, ALL_LAYOUT, ops::DataNormKernel, float, double) {}
+PD_REGISTER_STRUCT_KERNEL(
+    data_norm_grad, CPU, ALL_LAYOUT, ops::DataNormGradKernel, float, double) {}
+
 REGISTER_OP_VERSION(data_norm).AddCheckpoint(
     R"ROC(
               upgrad data_norm op by adding scale_w to support scale and shift.)ROC",

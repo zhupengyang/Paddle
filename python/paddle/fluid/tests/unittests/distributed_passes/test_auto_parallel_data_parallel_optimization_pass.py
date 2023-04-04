@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
 import random
 import sys
 import unittest
@@ -21,7 +20,7 @@ import numpy as np
 from auto_parallel_pass_test_base import AutoPallelPassTestBase
 
 import paddle
-import paddle.distributed.fleet as fleet
+from paddle.distributed import fleet
 from paddle.distributed.auto_parallel.dist_context import (
     get_default_distributed_context,
 )
@@ -123,7 +122,6 @@ class TestDataParallelPassWithScale2(TestDataParallelPassWithScale1):
 class TestDataParallelPassWithStandaloneEXE(TestDataParallelPassWithScale1):
     def init(self):
         if paddle.is_compiled_with_cuda():
-            os.environ['FLAGS_CONVERT_GRAPH_TO_PROGRAM'] = "1"
             paddle.set_flags({'FLAGS_cudnn_deterministic': 1})
         self.rtol = 1e-5
         self.atol = 1e-8

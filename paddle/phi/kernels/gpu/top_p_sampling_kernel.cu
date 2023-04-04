@@ -396,10 +396,9 @@ __global__ void topp_sampling(T* sorted_probs,
   __shared__ float rand_p;
   const int tid = threadIdx.x;
   const int bid = blockIdx.x;
-  constexpr int WARP_SIZE = 32;
-  constexpr int NUM_WARPS = BLOCK_SIZE / WARP_SIZE;
-  const int lane_id = tid % WARP_SIZE;
-  const int warp_id = tid / WARP_SIZE;
+  constexpr int NUM_WARPS = BLOCK_SIZE / 32;
+  const int lane_id = tid % 32;
+  const int warp_id = tid / 32;
   const float p_t = static_cast<float>(top_ps[bid]);
   if (tid == 0) {
     stop_shared = 0;
@@ -554,8 +553,8 @@ void TopPSamplingKernel(const Context& dev_ctx,
   }
 
   curandState_t* dev_curand_states;
-  paddle::memory::AllocationPtr curand_states_buf{nullptr};
-  curand_states_buf = paddle::memory::Alloc(
+  phi::Allocator::AllocationPtr curand_states_buf{nullptr};
+  curand_states_buf = phi::memory_utils::Alloc(
                       dev_ctx.GetPlace(),
                       bs * sizeof(curandState_t),
                       phi::Stream(reinterpret_cast<phi::StreamId>(dev_ctx.stream())));

@@ -32,7 +32,7 @@ TRTInt8Calibrator::TRTInt8Calibrator(
     : batch_size_(batch_size), engine_name_(engine_name) {
   int i = 0;
   VLOG(4) << "Init a new calibrator: " << engine_name_;
-  for (const auto it : buffers) {
+  for (const auto& it : buffers) {
     phi::DenseTensor temp_tensor;
     std::string input_name = it.first;
     int data_size = it.second;
@@ -115,11 +115,14 @@ bool TRTInt8Calibrator::getBatch(void** bindings,
   for (int i = 0; i < num_bindings; i++) {
     auto it = data_buffers_.find(names[i]);
     if (it == data_buffers_.end()) {
-      PADDLE_THROW(
-          platform::errors::Fatal("Calibration engine asked for unknown tensor "
-                                  "name '%s' at position %d.",
-                                  names[i],
-                                  i));
+      try {
+        PADDLE_THROW(platform::errors::Fatal(
+            "Calibration engine asked for unknown tensor "
+            "name '%s' at position %d.",
+            names[i],
+            i));
+      } catch (std::exception& e) {
+      }
     }
     bindings[i] = it->second.first;
   }

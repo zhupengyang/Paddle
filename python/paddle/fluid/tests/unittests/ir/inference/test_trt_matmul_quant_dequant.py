@@ -18,9 +18,9 @@ import numpy as np
 from quant_dequant_test import QuantDequantTest
 
 import paddle
-import paddle.fluid as fluid
-import paddle.fluid.core as core
 import paddle.nn.functional as F
+from paddle import fluid
+from paddle.fluid import core
 from paddle.fluid.core import AnalysisConfig, PassVersionChecker
 
 
@@ -29,10 +29,12 @@ class TensorRTMatMulQuantDequantDims3Test(QuantDequantTest):
         self.set_params()
 
         def network():
-            self.data = fluid.data(
+            self.data = paddle.static.data(
                 name='data', shape=[1, 28, 28], dtype='float32'
             )
-            self.label = fluid.data(name='label', shape=[1, 1], dtype='int64')
+            self.label = paddle.static.data(
+                name='label', shape=[1, 1], dtype='int64'
+            )
             matmul_out = paddle.matmul(
                 x=self.data,
                 y=self.data,
@@ -40,12 +42,12 @@ class TensorRTMatMulQuantDequantDims3Test(QuantDequantTest):
                 transpose_y=self.transpose_y,
             )
             matmul_out = paddle.scale(matmul_out, scale=self.alpha)
-            fc_out = fluid.layers.fc(
-                input=matmul_out,
+            fc_out = paddle.static.nn.fc(
+                x=matmul_out,
                 size=10,
                 num_flatten_dims=1,
                 bias_attr=False,
-                act=None,
+                activation=None,
             )
             result = F.relu(fc_out)
             loss = paddle.nn.functional.cross_entropy(
@@ -129,10 +131,12 @@ class TensorRTMatMulQuantDequantDims4Test(QuantDequantTest):
         self.set_params()
 
         def network():
-            self.data = fluid.data(
+            self.data = paddle.static.data(
                 name='data', shape=[1, 28, 28], dtype='float32'
             )
-            self.label = fluid.data(name='label', shape=[1, 1], dtype='int64')
+            self.label = paddle.static.data(
+                name='label', shape=[1, 1], dtype='int64'
+            )
             reshape_out = paddle.reshape(self.data, shape=[1, 4, 14, 14])
             matmul_out = paddle.matmul(
                 x=reshape_out,
@@ -142,12 +146,12 @@ class TensorRTMatMulQuantDequantDims4Test(QuantDequantTest):
             )
             matmul_out = paddle.scale(matmul_out, scale=self.alpha)
             out = paddle.static.nn.batch_norm(matmul_out, is_test=True)
-            fc_out = fluid.layers.fc(
-                input=matmul_out,
+            fc_out = paddle.static.nn.fc(
+                x=matmul_out,
                 size=10,
                 num_flatten_dims=1,
                 bias_attr=False,
-                act=None,
+                activation=None,
             )
             result = F.relu(fc_out)
             loss = paddle.nn.functional.cross_entropy(
@@ -231,10 +235,12 @@ class TensorRTMatMulQuantDequantDims3DynamicTest(QuantDequantTest):
         self.set_params()
 
         def network():
-            self.data = fluid.data(
+            self.data = paddle.static.data(
                 name='data', shape=[-1, 28, 28], dtype='float32'
             )
-            self.label = fluid.data(name='label', shape=[1, 1], dtype='int64')
+            self.label = paddle.static.data(
+                name='label', shape=[1, 1], dtype='int64'
+            )
             matmul_out = paddle.matmul(
                 x=self.data,
                 y=self.data,
@@ -243,12 +249,12 @@ class TensorRTMatMulQuantDequantDims3DynamicTest(QuantDequantTest):
             )
             matmul_out = paddle.scale(matmul_out, scale=self.alpha)
             out = paddle.static.nn.batch_norm(matmul_out, is_test=True)
-            fc_out = fluid.layers.fc(
-                input=matmul_out,
+            fc_out = paddle.static.nn.fc(
+                x=matmul_out,
                 size=10,
                 num_flatten_dims=1,
                 bias_attr=False,
-                act=None,
+                activation=None,
             )
             result = F.relu(fc_out)
             loss = paddle.nn.functional.cross_entropy(

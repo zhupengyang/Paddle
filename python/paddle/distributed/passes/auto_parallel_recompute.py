@@ -14,8 +14,8 @@
 
 import logging
 
+import paddle
 from paddle.distributed.fleet.meta_optimizers.common import OP_ROLE_KEY, OpRole
-from paddle.fluid import core, framework, unique_name
 from paddle.fluid.backward import (
     ProgramStats,
     _append_grad_suffix_,
@@ -23,8 +23,10 @@ from paddle.fluid.backward import (
     _get_no_grad_set_name,
     _rename_arg_,
 )
+from paddle.framework import core
+from paddle.utils import unique_name
 
-from ..auto_parallel.dist_attribute import OperatorDistributedAttribute
+from ..auto_parallel.dist_attribute import OperatorDistAttr
 from ..auto_parallel.utils import (
     get_loss_op,
     insert_dependencies_for_two_ops,
@@ -97,7 +99,7 @@ class RecomputeState(ProgramStats):
             segments.append([segment_idx[0], segment_idx[-1] + 1])
             self._checkpoints.extend(self.ops[segment_idx[-1]].output_arg_names)
 
-        for i in reversed(sorted(no_recompute_segments)):
+        for i in sorted(no_recompute_segments, reverse=True):
             assert i < len(
                 segments
             ), "the no_recompute_segments idx [{}] should be lower the number of segment [{}]".format(
@@ -221,7 +223,8 @@ def _add_needed_descs_to_block(
 
     result_descs = []
     for desc in descs:
-        if isinstance(desc, framework.Operator):
+        # if isinstance(desc, framework.Operator):
+        if isinstance(desc, paddle.static.Operator):
             desc = desc.desc
         if isinstance(desc, tuple):
             desc = desc[0]
@@ -290,9 +293,7 @@ class RecomputePass(PassBase):
             return
 
         for i, (idx1, idx2) in enumerate(segments):
-            logging.info(
-                "recompute segment[{}/{}]".format(i + 1, len(segments))
-            )
+            logging.info(f"recompute segment[{i + 1}/{len(segments)}]")
             logging.info(
                 "segment start op: [{}]: [{}] [{}]".format(
                     rc_state.ops[idx1].type,
@@ -474,6 +475,7 @@ class RecomputePass(PassBase):
                                 self._dist_context,
                                 is_recompute=True,
                                 sync=False,
+                                op_namescope="recompute_segment_dep",
                             )
         main_program._sync_with_cpp()
 
@@ -494,7 +496,7 @@ class RecomputePass(PassBase):
                 )
 
     def set_op_dist_attr(self, op, old_dist_attr, var_name_dict):
-        new_dist_attr = OperatorDistributedAttribute()
+        new_dist_attr = OperatorDistAttr()
         new_dist_attr.is_recompute = True
         new_dist_attr.impl_idx = old_dist_attr.impl_idx
         new_dist_attr.impl_type = old_dist_attr.impl_type

@@ -45,7 +45,6 @@ limitations under the License. */
 #endif
 
 #if defined(PADDLE_WITH_ASCEND_CL)
-#include "paddle/fluid/platform/device/npu/hccl_helper.h"
 #endif
 
 #if defined(PADDLE_WITH_CNCL)
@@ -66,10 +65,10 @@ class CReduceOp : public framework::OperatorWithKernel {
   }
 
  protected:
-  framework::OpKernelType GetExpectedKernelType(
+  phi::KernelKey GetExpectedKernelType(
       const framework::ExecutionContext& ctx) const override {
-    return framework::OpKernelType(
-        OperatorWithKernel::IndicateVarDataType(ctx, "X"), ctx.GetPlace());
+    return phi::KernelKey(OperatorWithKernel::IndicateVarDataType(ctx, "X"),
+                          ctx.GetPlace());
   }
 };
 

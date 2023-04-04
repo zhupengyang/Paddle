@@ -18,8 +18,8 @@ import numpy as np
 from inference_pass_test import InferencePassTest
 
 import paddle
-import paddle.fluid as fluid
 import paddle.nn.functional as F
+from paddle import fluid
 
 
 class TestMKLDNNMatmulFuseOp(InferencePassTest):
@@ -32,10 +32,10 @@ class TestMKLDNNMatmulFuseOp(InferencePassTest):
 
     def make_network(self):
         with fluid.program_guard(self.main_program, self.startup_program):
-            x = fluid.data(
+            x = paddle.static.data(
                 name='x', shape=[-1] + self.shape_x, dtype=self.d_type
             )
-            y = fluid.data(
+            y = paddle.static.data(
                 name='y', shape=[-1] + self.shape_y, dtype=self.d_type
             )
             out = paddle.matmul(x, y)
@@ -74,16 +74,16 @@ class TestMKLDNNMatmulOtherDimsFuseOp(TestMKLDNNMatmulFuseOp):
 class TestMKLDNNMatmulOpNotFusedWrongTransposeAxis(TestMKLDNNMatmulFuseOp):
     def make_network(self):
         with fluid.program_guard(self.main_program, self.startup_program):
-            x = fluid.data(
+            x = paddle.static.data(
                 name='x', shape=[-1] + self.shape_x, dtype=self.d_type
             )
-            y = fluid.data(
+            y = paddle.static.data(
                 name='y', shape=[-1] + self.shape_y, dtype=self.d_type
             )
             out = paddle.matmul(x, y)
             out = paddle.transpose(out, perm=[0, 1, 2, 3])
             out = paddle.reshape(out, [0, 0, 0, 0])
-            out = fluid.layers.fc(out, size=1)
+            out = paddle.static.nn.fc(out, size=1)
         return out
 
 
@@ -97,10 +97,10 @@ class TestMKLDNNMatmulOpNotFusedBreakPattern(TestMKLDNNMatmulFuseOp):
 
     def make_network(self):
         with fluid.program_guard(self.main_program, self.startup_program):
-            x = fluid.data(
+            x = paddle.static.data(
                 name='x', shape=[-1] + self.shape_x, dtype=self.d_type
             )
-            y = fluid.data(
+            y = paddle.static.data(
                 name='y', shape=[-1] + self.shape_y, dtype=self.d_type
             )
             out = paddle.matmul(x, y)

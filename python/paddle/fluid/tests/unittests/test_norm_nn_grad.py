@@ -19,8 +19,8 @@ import numpy as np
 from decorator_helper import prog_scope
 
 import paddle
-import paddle.fluid as fluid
-import paddle.fluid.core as core
+from paddle import fluid
+from paddle.fluid import core
 
 
 class TestInstanceNormDoubleGradCheck(unittest.TestCase):
@@ -87,7 +87,7 @@ class TestInstanceNormDoubleGradEagerCheck(unittest.TestCase):
             x = paddle.create_parameter(dtype=dtype, shape=shape, name='x')
             z = paddle.nn.functional.instance_norm(x)
             x_arr = np.random.uniform(-1, 1, shape).astype(dtype)
-            # check for static mode
+            # check for static graph mode
             gradient_checker.double_grad_check(
                 [x], z, x_init=x_arr, atol=atol, place=place, eps=eps
             )
@@ -129,7 +129,7 @@ class TestInstanceNormDoubleGradEagerCheckWithParams(
             x = paddle.create_parameter(dtype=dtype, shape=shape, name='x')
             z = paddle.nn.InstanceNorm2D(3)(x)
             x_arr = np.random.uniform(-1, 1, shape).astype(dtype)
-            # check for static mode
+            # check for static graph mode
             gradient_checker.double_grad_check(
                 [x], z, x_init=x_arr, atol=atol, place=place, eps=eps
             )

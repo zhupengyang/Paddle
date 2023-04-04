@@ -24,9 +24,8 @@ else:
 import unittest
 
 import paddle
-import paddle.distributed.fleet as fleet
-import paddle.fluid as fluid
-import paddle.nn as nn
+from paddle import fluid, nn
+from paddle.distributed import fleet
 
 
 class LinearNet(nn.Layer):
@@ -83,8 +82,8 @@ class TestFleetBaseSingleRunCollective(unittest.TestCase):
         input_x = paddle.static.data(name="x", shape=[-1, 32], dtype='float32')
         input_y = paddle.static.data(name="y", shape=[-1, 1], dtype='int64')
 
-        fc_1 = fluid.layers.fc(input=input_x, size=64, act='tanh')
-        prediction = fluid.layers.fc(input=fc_1, size=2, act='softmax')
+        fc_1 = paddle.static.nn.fc(x=input_x, size=64, activation='tanh')
+        prediction = paddle.static.nn.fc(x=fc_1, size=2, activation='softmax')
         cost = paddle.nn.functional.cross_entropy(
             input=prediction, label=input_y, reduction='none', use_softmax=False
         )
@@ -106,7 +105,7 @@ class TestFleetBaseSingleRunCollective(unittest.TestCase):
 
         for i in range(10):
             cost_val = exe.run(feed=self.gen_data(), fetch_list=[avg_cost.name])
-            print("cost of step[{}] = {}".format(i, cost_val))
+            print(f"cost of step[{i}] = {cost_val}")
 
 
 class TestFleetBaseSingleRunPS(unittest.TestCase):
@@ -124,8 +123,8 @@ class TestFleetBaseSingleRunPS(unittest.TestCase):
         input_x = paddle.static.data(name="x", shape=[-1, 32], dtype='float32')
         input_y = paddle.static.data(name="y", shape=[-1, 1], dtype='int64')
 
-        fc_1 = fluid.layers.fc(input=input_x, size=64, act='tanh')
-        prediction = fluid.layers.fc(input=fc_1, size=2, act='softmax')
+        fc_1 = paddle.static.nn.fc(x=input_x, size=64, activation='tanh')
+        prediction = paddle.static.nn.fc(x=fc_1, size=2, activation='softmax')
         cost = paddle.nn.functional.cross_entropy(
             input=prediction, label=input_y, reduction='none', use_softmax=False
         )

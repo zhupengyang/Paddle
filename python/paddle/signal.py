@@ -14,7 +14,7 @@
 
 import paddle
 from paddle import _C_ops, _legacy_C_ops
-from paddle.fluid.framework import _in_legacy_dygraph, in_dygraph_mode
+from paddle.fluid.framework import in_dygraph_mode
 
 from .fft import fft_c2c, fft_c2r, fft_r2c
 from .fluid.data_feeder import check_variable_and_dtype
@@ -46,7 +46,7 @@ def frame(x, frame_length, hop_length, axis=-1, name=None):
         The output frames tensor with shape `[..., frame_length, num_frames]` if `axis==-1`,
             otherwise `[num_frames, frame_length, ...]` where
 
-            `num_framse = 1 + (x.shape[axis] - frame_length) // hop_length`
+            `num_frames = 1 + (x.shape[axis] - frame_length) // hop_length`
 
     Examples:
 
@@ -125,23 +125,10 @@ def frame(x, frame_length, hop_length, axis=-1, name=None):
                 f'but got ({frame_length}) > ({x.shape[axis]}).'
             )
 
-    op_type = 'frame'
-
     if in_dygraph_mode():
         return _C_ops.frame(x, frame_length, hop_length, axis)
-
-    if _in_legacy_dygraph():
-        attrs = (
-            'frame_length',
-            frame_length,
-            'hop_length',
-            hop_length,
-            'axis',
-            axis,
-        )
-        op = getattr(_legacy_C_ops, op_type)
-        out = op(x, *attrs)
     else:
+        op_type = 'frame'
         check_variable_and_dtype(
             x, 'x', ['int32', 'int64', 'float16', 'float32', 'float64'], op_type
         )
@@ -320,9 +307,6 @@ def stft(
             y1 = stft(x, n_fft=512, center=False, onesided=False)  # [8, 512, 372]
 
     """
-    check_variable_and_dtype(
-        x, 'x', ['float32', 'float64', 'complex64', 'complex128'], 'stft'
-    )
 
     x_rank = len(x.shape)
     assert x_rank in [
@@ -373,7 +357,7 @@ def stft(
         )
 
         pad_length = n_fft // 2
-        # FIXME: Input `x` can be a complex tensor but pad does not supprt complex input.
+        # FIXME: Input `x` can be a complex tensor but pad does not support complex input.
         x = paddle.nn.functional.pad(
             x.unsqueeze(-1),
             pad=[pad_length, pad_length],
@@ -444,13 +428,13 @@ def istft(
     - :math:`H`: Value of `hop_length`.
 
         Result of `istft` expected to be the inverse of `paddle.signal.stft`, but it is
-        not guaranteed to reconstruct a exactly realizible time-domain signal from a STFT
+        not guaranteed to reconstruct a exactly realizable time-domain signal from a STFT
         complex tensor which has been modified (via masking or otherwise). Therefore, `istft`
         gives the `[Griffin-Lim optimal estimate] <https://ieeexplore.ieee.org/document/1164317>`_
         (optimal in a least-squares sense) for the corresponding signal.
 
     Args:
-        x (Tensor): The input data which is a 2-dimensional or 3-dimensional **complesx**
+        x (Tensor): The input data which is a 2-dimensional or 3-dimensional **complex**
             Tensor with shape `[..., n_fft, num_frames]`.
         n_fft (int): The size of Fourier transform.
         hop_length (int, optional): Number of steps to advance between adjacent windows
@@ -566,7 +550,7 @@ def istft(
     if win_length < n_fft:
         pad_left = (n_fft - win_length) // 2
         pad_right = n_fft - win_length - pad_left
-        # FIXME: Input `window` can be a complex tensor but pad does not supprt complex input.
+        # FIXME: Input `window` can be a complex tensor but pad does not support complex input.
         window = paddle.nn.functional.pad(
             window, pad=[pad_left, pad_right], mode='constant'
         )

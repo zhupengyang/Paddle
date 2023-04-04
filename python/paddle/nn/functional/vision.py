@@ -13,13 +13,12 @@
 # limitations under the License.
 
 from paddle import _C_ops, _legacy_C_ops, in_dynamic_mode
-from paddle.fluid.framework import _in_legacy_dygraph, in_dygraph_mode
-from paddle.framework import _non_static_mode
+from paddle.fluid.framework import in_dygraph_mode
 
+from ...common_ops_import import Variable
 from ...device import get_cudnn_version, is_compiled_with_rocm
 from ...fluid.data_feeder import check_variable_and_dtype
 from ...fluid.layer_helper import LayerHelper
-from ...static import Variable
 
 __all__ = []
 
@@ -87,17 +86,13 @@ def affine_grid(theta, out_shape, align_corners=True, name=None):
 
     if in_dygraph_mode():
         _out_shape = (
-            out_shape.numpy().tolist()
-            if isinstance(out_shape, Variable)
-            else out_shape
+            out_shape.tolist() if isinstance(out_shape, Variable) else out_shape
         )
         theta = theta._use_gpudnn(use_cudnn)
         return _C_ops.affine_grid(theta, _out_shape, align_corners)
     elif in_dynamic_mode():
         _out_shape = (
-            out_shape.numpy().tolist()
-            if isinstance(out_shape, Variable)
-            else out_shape
+            out_shape.tolist() if isinstance(out_shape, Variable) else out_shape
         )
         return _legacy_C_ops.affine_grid(
             theta,
@@ -321,7 +316,7 @@ def grid_sample(
             'use_cudnn',
             use_cudnn,
         )
-        out = getattr(_legacy_C_ops, 'grid_sampler')(x, grid, *attrs)
+        out = _legacy_C_ops.grid_sampler(x, grid, *attrs)
     else:
         helper = LayerHelper("grid_sample", **locals())
         check_variable_and_dtype(x, 'x', ['float32', 'float64'], 'grid_sample')
@@ -354,7 +349,7 @@ def pixel_shuffle(x, upscale_factor, data_format="NCHW", name=None):
     Parameters:
         x(Tensor): 4-D tensor, the data type should be float32 or float64.
         upscale_factor(int): factor to increase spatial resolution.
-        data_format (str, optional): The data format of the input and output data. An optional string from: ``'NCHW'``, ``'NHWC'``. When it is ``'NCHW'``, the data is stored in the order of: [batch_size, input_channels, input_height, input_width]. Default: ``'NCHW'``.
+        data_format (str, optional): The data format of the input and output data. An optional string from: ``"NCHW"``, ``"NHWC"``. When it is ``"NCHW"``, the data is stored in the order of: [batch_size, input_channels, input_height, input_width]. Default: ``"NCHW"``.
         name (str, optional): Name for the operation (optional, default is None). For more information, please refer to :ref:`api_guide_Name`.
 
     Returns:
@@ -381,22 +376,22 @@ def pixel_shuffle(x, upscale_factor, data_format="NCHW", name=None):
         )
     if in_dygraph_mode():
         return _C_ops.pixel_shuffle(x, upscale_factor, data_format)
-
-    if _in_legacy_dygraph():
-        return _legacy_C_ops.pixel_shuffle(
-            x, "upscale_factor", upscale_factor, "data_format", data_format
+    else:
+        helper = LayerHelper("pixel_shuffle", **locals())
+        check_variable_and_dtype(
+            x, 'x', ['float16', 'float32', 'float64'], 'pixel_shuffle'
         )
-
-    helper = LayerHelper("pixel_shuffle", **locals())
-    check_variable_and_dtype(x, 'x', ['float32', 'float64'], 'pixel_shuffle')
-    out = helper.create_variable_for_type_inference(dtype=x.dtype)
-    helper.append_op(
-        type="pixel_shuffle",
-        inputs={"X": x},
-        outputs={"Out": out},
-        attrs={"upscale_factor": upscale_factor, "data_format": data_format},
-    )
-    return out
+        out = helper.create_variable_for_type_inference(dtype=x.dtype)
+        helper.append_op(
+            type="pixel_shuffle",
+            inputs={"X": x},
+            outputs={"Out": out},
+            attrs={
+                "upscale_factor": upscale_factor,
+                "data_format": data_format,
+            },
+        )
+        return out
 
 
 def pixel_unshuffle(x, downscale_factor, data_format="NCHW", name=None):
@@ -442,7 +437,7 @@ def pixel_unshuffle(x, downscale_factor, data_format="NCHW", name=None):
             "But recevie Attr(data_format): {} ".format(data_format)
         )
 
-    if _non_static_mode():
+    if in_dygraph_mode():
         return _legacy_C_ops.pixel_unshuffle(
             x, "downscale_factor", downscale_factor, "data_format", data_format
         )
@@ -516,10 +511,8 @@ def channel_shuffle(x, groups, data_format="NCHW", name=None):
             "But recevie Attr(data_format): {} ".format(data_format)
         )
 
-    if _non_static_mode():
-        return _legacy_C_ops.channel_shuffle(
-            x, "groups", groups, "data_format", data_format
-        )
+    if in_dygraph_mode():
+        return _C_ops.channel_shuffle(x, groups, data_format)
 
     helper = LayerHelper("channel_shuffle", **locals())
     check_variable_and_dtype(x, 'x', ['float32', 'float64'], 'channel_shuffle')

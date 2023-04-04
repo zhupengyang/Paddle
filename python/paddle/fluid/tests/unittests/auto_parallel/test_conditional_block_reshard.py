@@ -15,8 +15,8 @@
 import unittest
 
 import paddle
-import paddle.nn as nn
 import paddle.nn.functional as F
+from paddle import nn
 from paddle.distributed.fleet import auto
 from paddle.static import InputSpec
 
@@ -52,13 +52,13 @@ class MLPLayer(nn.Layer):
         out = self.norm(input)
 
         auto.shard_tensor(
-            self.linear0.weight, auto.ProcessMesh([0, 1], "x"), [None, "x"]
+            self.linear0.weight, auto.ProcessMesh([0, 1], ["x"]), [None, "x"]
         )
         out = self.linear0(out)
         out = F.gelu(out, approximate=True)
 
         auto.shard_tensor(
-            self.linear1.weight, auto.ProcessMesh([0, 1], "x"), ["x", None]
+            self.linear1.weight, auto.ProcessMesh([0, 1], ["x"]), ["x", None]
         )
         out = self.linear1(out)
 

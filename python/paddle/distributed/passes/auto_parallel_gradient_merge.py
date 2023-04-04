@@ -18,15 +18,15 @@ import paddle
 from paddle.distributed.auto_parallel.process_group import (
     get_world_process_group,
 )
+from paddle.distributed.auto_parallel.process_mesh import ProcessMesh
 from paddle.distributed.auto_parallel.utils import (
     is_optimize_op,
     naive_set_dist_op_attr_for_program_by_mesh_and_mapping,
     set_var_dist_attr,
 )
 from paddle.distributed.fleet.meta_optimizers.common import OP_ROLE_KEY, OpRole
-from paddle.fluid import layers
-from paddle.fluid.framework import device_guard
 from paddle.framework import core
+from paddle.static import device_guard
 
 from .pass_base import PassBase, PassType, register_pass
 
@@ -108,7 +108,10 @@ def _get_gm_cond_var(main_program, k_steps, dist_context):
             attrs={'step': float(1.0), OP_ROLE_KEY: OpRole.Backward},
         )
         naive_set_dist_op_attr_for_program_by_mesh_and_mapping(
-            increment_op, world_process_group.ranks, [-1], dist_context
+            increment_op,
+            ProcessMesh(world_process_group.ranks),
+            [-1],
+            dist_context,
         )
         # step_var %= k_step
         elementwise_mod_op = main_block.append_op(
@@ -122,7 +125,10 @@ def _get_gm_cond_var(main_program, k_steps, dist_context):
             },
         )
         naive_set_dist_op_attr_for_program_by_mesh_and_mapping(
-            elementwise_mod_op, world_process_group.ranks, [-1], dist_context
+            elementwise_mod_op,
+            ProcessMesh(world_process_group.ranks),
+            [-1],
+            dist_context,
         )
         # cond_var = (step_var == 0)
         equal_op = main_block.append_op(
@@ -132,7 +138,7 @@ def _get_gm_cond_var(main_program, k_steps, dist_context):
             attrs={OP_ROLE_KEY: OpRole.Backward},
         )
         naive_set_dist_op_attr_for_program_by_mesh_and_mapping(
-            equal_op, world_process_group.ranks, [-1], dist_context
+            equal_op, ProcessMesh(world_process_group.ranks), [-1], dist_context
         )
 
     return cond_var
@@ -277,7 +283,7 @@ def _create_cond_block_and_update_optimizer(
 
         # clear gradient_merge_vars
         for param, new_grad in new_params_to_grads:
-            layers.fill_constant(
+            paddle.tensor.fill_constant(
                 shape=new_grad.shape,
                 dtype=new_grad.dtype,
                 value=0.0,

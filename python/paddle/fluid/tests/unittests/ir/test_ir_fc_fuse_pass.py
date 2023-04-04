@@ -18,20 +18,20 @@ import numpy as np
 from pass_test import PassTest
 
 import paddle
-import paddle.fluid as fluid
-import paddle.fluid.core as core
+from paddle import fluid
+from paddle.fluid import core
 
 
 class FCFusePassTest(PassTest):
     def setUp(self):
         with fluid.program_guard(self.main_program, self.startup_program):
-            data = fluid.data(
+            data = paddle.static.data(
                 name="data", shape=[32, 128], dtype="float32", lod_level=0
             )
-            tmp_0 = fluid.layers.fc(
-                input=data, size=128, num_flatten_dims=1, act="relu"
+            tmp_0 = paddle.static.nn.fc(
+                x=data, size=128, num_flatten_dims=1, activation="relu"
             )
-            tmp_1 = fluid.layers.fc(input=tmp_0, size=32, num_flatten_dims=1)
+            tmp_1 = paddle.static.nn.fc(x=tmp_0, size=32, num_flatten_dims=1)
             tmp_2 = paddle.nn.functional.softmax(tmp_1)
 
         self.feeds = {"data": np.random.random((32, 128)).astype("float32")}

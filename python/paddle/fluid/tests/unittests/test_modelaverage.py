@@ -17,8 +17,7 @@ import unittest
 import numpy as np
 
 import paddle
-import paddle.fluid as fluid
-import paddle.nn as nn
+from paddle import fluid, nn
 
 
 class TestModelAverage(unittest.TestCase):
@@ -32,8 +31,10 @@ class TestModelAverage(unittest.TestCase):
         test_program = fluid.Program()
         with fluid.program_guard(train_program, startup):
             with fluid.unique_name.guard():
-                data = fluid.data(name='X', shape=[None, 1], dtype='float32')
-                hidden = fluid.layers.fc(input=data, size=10)
+                data = paddle.static.data(
+                    name='X', shape=[None, 1], dtype='float32'
+                )
+                hidden = paddle.static.nn.fc(x=data, size=10)
                 loss = paddle.mean(hidden)
                 test_program = train_program.clone()
                 optimizer = paddle.optimizer.Momentum(

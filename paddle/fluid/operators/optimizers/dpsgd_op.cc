@@ -72,10 +72,10 @@ class DpsgdOp : public framework::OperatorWithKernel {
 
     ctx->SetOutputDim("ParamOut", param_dims);
   }
-  framework::OpKernelType GetExpectedKernelType(
+  phi::KernelKey GetExpectedKernelType(
       const framework::ExecutionContext &ctx) const override {
-    return framework::OpKernelType(
-        OperatorWithKernel::IndicateVarDataType(ctx, "Param"), ctx.GetPlace());
+    return phi::KernelKey(OperatorWithKernel::IndicateVarDataType(ctx, "Param"),
+                          ctx.GetPlace());
   }
 };
 
@@ -131,6 +131,6 @@ CCS16 - Deep Learning with Differential Privacy.
 
 namespace ops = paddle::operators;
 REGISTER_OP_WITHOUT_GRADIENT(dpsgd, ops::DpsgdOp, ops::DpsgdOpMaker);
-REGISTER_OP_CPU_KERNEL(dpsgd,
-                       ops::DpsgdOpKernel<phi::CPUContext, float>,
-                       ops::DpsgdOpKernel<phi::CPUContext, double>);
+
+PD_REGISTER_STRUCT_KERNEL(
+    dpsgd, CPU, ALL_LAYOUT, ops::DpsgdOpKernel, float, double) {}
