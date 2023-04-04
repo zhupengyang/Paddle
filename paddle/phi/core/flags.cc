@@ -55,16 +55,19 @@ PADDLE_DEFINE_EXPORTED_int32(paddle_num_threads,
 /**
  * Low Precision Op related FLAG
  * Name: FLAGS_low_precision_op_list
- * Since Version: 0.13.0
- * Value Range: bool, default=false
+ * Since Version: 2.5.0
+ * Value Range: int32, default=0
  * Example:
  * Note: Used to debug. Get the low precision op list of current module.
+ * FLAGS_check_nan_inf is set.
+ * - 1, return the low precision op list of current module.
+ * - 2, return the op list of current module.
  */
-PADDLE_DEFINE_EXPORTED_bool(low_precision_op_list,
-                            false,
-                            "Checking whether get the low precision op list of "
-                            "current module. It will be "
-                            "rerun the low precision list after module.");
+PADDLE_DEFINE_EXPORTED_int32(low_precision_op_list,
+                             0,
+                             "Setting the level of low precision op"
+                             "list printing. It will be return the "
+                             "low precision op list of current module.");
 
 /**
  * Operator related FLAG
@@ -117,8 +120,7 @@ PADDLE_DEFINE_EXPORTED_bool(
 
 // NOTE(zhiqiu): better to share the flags, otherwise we will have too many
 // flags.
-#if defined(PADDLE_WITH_CUDA) || defined(PADDLE_WITH_HIP) || \
-    defined(PADDLE_WITH_ASCEND_CL)
+#if defined(PADDLE_WITH_CUDA) || defined(PADDLE_WITH_HIP)
 
 /**
  * CUDA related related FLAG
@@ -143,17 +145,17 @@ PADDLE_DEFINE_EXPORTED_bool(
  * CUDA related related FLAG
  * Name: FLAGS_gemm_use_half_precision_compute_type
  * Since Version: 2.4
- * Value Range: bool, default=true
+ * Value Range: bool, default=false
  * Example:
  * Note: whether to use fp16 compute type when the input and output is fp16,
  * faster but it may loss precision.
  */
 PADDLE_DEFINE_EXPORTED_bool(
     gemm_use_half_precision_compute_type,
-    true,
+    false,
     "Whether to use fp16 compute type when the input and output is fp16, "
     "faster but it may loss precision in most case. If true, the compute "
-    "type will be set to fp32. Default is true.");
+    "type will be set to fp16. Default is false.");
 
 /**
  * CUDA related FLAG
@@ -198,37 +200,6 @@ PADDLE_DEFINE_EXPORTED_int64(
     0,
     "The times of exhaustive search for cuBlasLt matmul with/without "
     " epilogue algorithms, default is 0, means disabling exhaustive search.");
-#endif
-
-#if defined(PADDLE_WITH_ASCEND_CL)
-PADDLE_DEFINE_EXPORTED_string(
-    selected_npus,
-    "",
-    "A list of device ids separated by comma, like: 0,1,2,3. "
-    "This option is useful when doing multi process training and "
-    "each process have only one device (NPU). If you want to use "
-    "all visible devices, set this to empty string.");
-PADDLE_DEFINE_EXPORTED_bool(
-    hccl_check_nan,
-    true,
-    "Check Nan in tensor before hccl_allreduce_sum otherwise it'll "
-    "core when meets Nan value");
-PADDLE_DEFINE_EXPORTED_string(
-    npu_config_path,
-    "",
-    "The absolute path of configuration json file, like: /tmp/config.json. "
-    "If proveided, it will be passed to aclInit().");
-PADDLE_DEFINE_EXPORTED_int32(min_loss_scaling,
-                             1,
-                             "set minmum loss scaling value!");
-PADDLE_DEFINE_EXPORTED_string(
-    npu_precision_mode,
-    "",
-    "NPU operator precision mode, options are 'force_fp32', 'force_fp16', "
-    "'allow_fp32_to_fp16', 'must_keep_origin_dtype' and "
-    "'allow_mix_precision'. If you want to use the default mode ("
-    "allow_fp32_to_fp16), set this to empty string. For more details, "
-    "please refer to the documents");
 #endif
 
 /*
@@ -555,8 +526,7 @@ PADDLE_DEFINE_EXPORTED_double(
 
 // NOTE(zhiqiu): better to share the flags, otherwise we will have too many
 // flags.
-#if defined(PADDLE_WITH_CUDA) || defined(PADDLE_WITH_HIP) ||      \
-    defined(PADDLE_WITH_ASCEND_CL) || defined(PADDLE_WITH_MLU) || \
+#if defined(PADDLE_WITH_CUDA) || defined(PADDLE_WITH_HIP) || \
     defined(PADDLE_WITH_CUSTOM_DEVICE)
 
 /**
@@ -644,6 +614,23 @@ PADDLE_DEFINE_EXPORTED_uint64(
     "the process would raise out of memory error if the allocated "
     "memory exceeds the limit even though there is available "
     "memory on the gpu card. The unit is MB and default value is 0.");
+
+/**
+ * Memory related FLAG
+ * Name: FLAGS_auto_growth_chunk_size_in_mb
+ * Since Version: 2.5.0
+ * Value Range: uint64, default=0 (MB)
+ * Example:
+ * Note: The minimal chunk size of GPU memory block in auto_growth allocator.
+ *       The real chunk size is max(request_size,
+ *       FLAGS_auto_growth_chunk_size_in_mb).
+ */
+PADDLE_DEFINE_EXPORTED_uint64(
+    auto_growth_chunk_size_in_mb,
+    0ul,
+    "The minimal chunk size of GPU memory block in auto_growth allocator.  "
+    "The real chunk size is max(request_size, "
+    "FLAGS_auto_growth_chunk_size_in_mb).");
 
 #endif
 
@@ -742,6 +729,16 @@ PADDLE_DEFINE_EXPORTED_int32(
     "instead of sum. Default is 0.");
 
 /**
+ * Tensor.numpy() has a hack, and this flag can close this hack
+ * [true]: set 0D Tensor to 1D Numpy
+ * [false]: not set 0D Tensor to 1D Numpy, close the hack
+ *
+ * Now, just set true by default in 2.5 transition time
+ * which will be removed in future (2.6 or 2.7) .
+ */
+PADDLE_DEFINE_EXPORTED_bool(set_to_1d, true, "set 0D Tensor to 1D numpy");
+
+/**
  * Debug related FLAG
  * Name: tracer_mkldnn_ops_on
  * Since Version: 2.0.0
@@ -807,9 +804,8 @@ PADDLE_DEFINE_EXPORTED_bool(use_fast_math,
  * Example:
  * Note: Get host by name time.
  */
-#if defined(PADDLE_WITH_CUDA) || defined(PADDLE_WITH_XPU) ||      \
-    defined(PADDLE_WITH_ASCEND_CL) || defined(PADDLE_WITH_HIP) || \
-    defined(PADDLE_WITH_MLU)
+#if defined(PADDLE_WITH_CUDA) || defined(PADDLE_WITH_XPU) || \
+    defined(PADDLE_WITH_HIP)
 PADDLE_DEFINE_EXPORTED_int32(get_host_by_name_time,
                              120,
                              "The maximum time for get host by name time");
@@ -982,6 +978,20 @@ PADDLE_DEFINE_EXPORTED_bool(enable_pe_launch_cinn,
 
 /*
  * CINN related FLAG
+ * Name: FLAGS_enable_interpretercore_launch_cinn
+ * Since Version: 2.4
+ * Value Range: bool, default=true
+ * Example: FLAGS_enable_interpretercore_launch_cinn=true would execute the CINN
+ * compiled instructions of a paddle graph with InterpreterCore, otherwise with
+ * the CINN compiled runtime program in sequential order.
+ */
+PADDLE_DEFINE_EXPORTED_bool(enable_interpretercore_launch_cinn,
+                            true,
+                            "It controls whether to execute cinn compiled "
+                            "program with InterpreterCore");
+
+/*
+ * CINN related FLAG
  * Name: FLAGS_enable_cinn_auto_tune
  * Since Version: 2.3
  * Value Range: bool, default=false
@@ -994,6 +1004,18 @@ PADDLE_DEFINE_EXPORTED_bool(enable_cinn_auto_tune,
                             "its auto-tune feature enabled");
 
 #endif
+
+/*
+ * CUDA Graph related FLAG
+ * Name: FLAGS_new_executor_use_cuda_graph
+ * Since Version: 2.4
+ * Value Range: bool, default=false
+ * Example: FLAGS_new_executor_use_cuda_graph=true would allow
+ * new executor to use CUDA Graph.
+ */
+PADDLE_DEFINE_EXPORTED_bool(new_executor_use_cuda_graph,
+                            false,
+                            "Use CUDA Graph in new executor");
 
 DEFINE_int32(record_pool_max_size,
              2000000,
@@ -1168,3 +1190,45 @@ PADDLE_DEFINE_EXPORTED_int64(custom_allreduce_one_shot_threshold, -1, ""); // 19
 PADDLE_DEFINE_EXPORTED_int64(custom_allreduce_two_shot_threshold, -1, ""); // 50331648
 
 PADDLE_DEFINE_EXPORTED_double(custom_llm_int8_threshold, 6.0, "");
+
+/**
+ * CI related FLAG
+ * Name: trt_ibuilder_cache
+ * Since Version: 2.5.0
+ * Value Range: bool, default=false
+ * Example:
+ * Note: This FLAG is only enabled when CI is running. If True, a persistent
+ * IBuilder is added to avoid TensorRT unload/reload kernels.
+ */
+PADDLE_DEFINE_EXPORTED_bool(trt_ibuilder_cache,
+                            false,
+                            "Add a persistent ibuilder.");
+
+/**
+ * mmap_allocator related FLAG
+ * Name: use_shm_cache
+ * Since Version: 2.5.0
+ * Value Range: bool, default=false
+ * Example:
+ * Note: . If True, mmap_allocator will cache shm file to decrease munmap
+ * operation.
+ */
+PADDLE_DEFINE_EXPORTED_bool(use_shm_cache,
+                            false,
+                            "Use shm cache in mmap_allocator.");
+
+/**
+ * Tensor operants related FLAG
+ * Name: tensor_operants_mode
+ * Since Version: 2.5.0
+ * Value Range: string, {eager, phi, static}
+ * default=eager
+ * Example:
+ * Note: For switching tensor operants mode of PaddlePaddle.
+ *       - eager mode: tensor operants with dygraph autograd;
+ *       - phi mode: tensor operants with only phi forward API;
+ *       - static mode: tensor operants within static graph.
+ */
+PADDLE_DEFINE_EXPORTED_string(tensor_operants_mode,
+                              "eager",
+                              "Tensor operants mode");

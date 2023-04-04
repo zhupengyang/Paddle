@@ -13,7 +13,6 @@ See the License for the specific language governing permissions and
 limitations under the License. */
 
 #include "paddle/fluid/operators/sequence_ops/sequence_mask_op.h"
-#include "paddle/fluid/platform/device/npu/npu_op_runner.h"
 
 namespace paddle {
 namespace operators {
@@ -48,10 +47,14 @@ class SequenceMaskNPUKernel : public framework::OpKernel<T> {
 
     if (maxlen < 0) {
       auto x_numel = x->numel();
-      std::vector<T> x_vec;
-      framework::TensorToVector(*x, dev_ctx, &x_vec);
-      auto x_data = x_vec.data();
-      maxlen = static_cast<int>(*std::max_element(x_data, x_data + x_numel));
+      if (x_numel == 0) {
+        maxlen = 0;
+      } else {
+        std::vector<T> x_vec;
+        framework::TensorToVector(*x, dev_ctx, &x_vec);
+        auto x_data = x_vec.data();
+        maxlen = static_cast<int>(*std::max_element(x_data, x_data + x_numel));
+      }
     }
     auto y_dim = phi::vectorize<int>(x->dims());
     y_dim.push_back(maxlen);

@@ -16,14 +16,13 @@ import os
 import unittest
 
 import numpy as np
-from op_test import OpTest, _set_use_system_allocator
+from eager_op_test import OpTest, _set_use_system_allocator
+from op import Operator
 
 import paddle
-import paddle.fluid as fluid
-import paddle.fluid.core as core
-from paddle.fluid import Program, program_guard
+from paddle import fluid
+from paddle.fluid import Program, core, program_guard
 from paddle.fluid.framework import grad_var_name
-from paddle.fluid.op import Operator
 
 _set_use_system_allocator(True)
 
@@ -618,7 +617,7 @@ class TestBatchNormOpTraining(unittest.TestCase):
 class TestBatchNormOpTrainingCase1(TestBatchNormOpTraining):
     def init_test_case(self):
         self.use_global_stats = False
-        self.no_grad_set = set(['scale@GRAD', 'bias@GRAD'])
+        self.no_grad_set = {'scale@GRAD', 'bias@GRAD'}
         self.fetch_list = ['y', 'mean', 'variance', 'x@GRAD']
 
 
@@ -642,7 +641,7 @@ class TestBatchNormOpTrainingCase2(TestBatchNormOpTraining):
 class TestBatchNormOpTrainingCase3(TestBatchNormOpTraining):
     def init_test_case(self):
         self.use_global_stats = False
-        self.no_grad_set = set(['x@GRAD'])
+        self.no_grad_set = {'x@GRAD'}
         self.fetch_list = ['y', 'mean', 'variance', 'scale@GRAD', 'bias@GRAD']
 
 
@@ -748,7 +747,7 @@ class TestBatchNormOpFreezeStatsAndScaleBiasTraining(
 ):
     def init_test_case(self):
         self.use_global_stats = True
-        self.no_grad_set = set(['scale@GRAD', 'bias@GRAD'])
+        self.no_grad_set = {'scale@GRAD', 'bias@GRAD'}
         self.fetch_list = ['y', 'mean', 'variance', 'x@GRAD']
 
 
@@ -763,8 +762,14 @@ class TestBatchNormOpError(unittest.TestCase):
 
             # the input dtype of batch_norm must be float16 or float32 or float64
             # float16 only can be set on GPU place
-            x2 = fluid.layers.data(name='x2', shape=[3, 4, 5, 6], dtype="int32")
+            x2 = paddle.static.data(
+                name='x2', shape=[-1, 3, 4, 5, 6], dtype="int32"
+            )
             self.assertRaises(TypeError, paddle.static.nn.batch_norm, x2)
+
+            # the first dimension of input for batch_norm must between [2d, 5d].
+            x3 = paddle.static.data("", shape=[0], dtype="float32")
+            self.assertRaises(ValueError, paddle.static.nn.batch_norm, x3)
 
 
 class TestDygraphBatchNormAPIError(unittest.TestCase):
@@ -779,7 +784,9 @@ class TestDygraphBatchNormAPIError(unittest.TestCase):
 
             # the input dtype of BatchNorm must be float16 or float32 or float64
             # float16 only can be set on GPU place
-            x2 = fluid.layers.data(name='x2', shape=[3, 4, 5, 6], dtype="int32")
+            x2 = paddle.static.data(
+                name='x2', shape=[-1, 3, 4, 5, 6], dtype="int32"
+            )
             self.assertRaises(TypeError, batch_norm, x2)
 
 
@@ -821,7 +828,9 @@ class TestDygraphBatchNormTrainableStats(unittest.TestCase):
                         is_test=is_test,
                         trainable_statistics=trainable_statistics,
                     )
-                    x = fluid.data(name='x', shape=x_np.shape, dtype=x_np.dtype)
+                    x = paddle.static.data(
+                        name='x', shape=x_np.shape, dtype=x_np.dtype
+                    )
                     y = bn(x)
                     exe.run(fluid.default_startup_program())
                     r = exe.run(feed={'x': x_np}, fetch_list=[y])[0]
@@ -838,7 +847,7 @@ class TestDygraphBatchNormOpenReserveSpace(unittest.TestCase):
         with program_guard(Program(), Program()):
             paddle.enable_static()
             x = np.random.random(size=(3, 10, 3, 7)).astype('float32')
-            x = fluid.data(name='x', shape=x.shape, dtype=x.dtype)
+            x = paddle.static.data(name='x', shape=x.shape, dtype=x.dtype)
             # Set this FLAG, the BatchNorm API will pass "reserve_space" argument into batch_norm op.
             os.environ['FLAGS_cudnn_batchnorm_spatial_persistent'] = '1'
             batch_norm = paddle.nn.BatchNorm(7, data_layout="NHWC")

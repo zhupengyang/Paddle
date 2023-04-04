@@ -16,7 +16,7 @@ import random
 import unittest
 
 import numpy as np
-from op_test import OpTest
+from eager_op_test import OpTest
 
 import paddle
 import paddle.nn.functional as F
@@ -141,6 +141,8 @@ class TestFusedMultiTransformerOp(OpTest):
         self.rotary_embs = None
         self.rotary_emb_dims = 0
         self.use_geglu = False
+
+        self.remove_padding = False
 
         self.remove_padding = False
 
@@ -1468,6 +1470,22 @@ class TestFusedMultiTransformerOpPreCacheStatic1(TestFusedMultiTransformerOp):
                 rtol=self.rtol,
                 atol=self.atol,
             )
+            out = layer(x)
+
+        self.assertRaises(ValueError, test_invalid_input_dim)
+
+
+class TestFusedMultiTransformerAPIError(unittest.TestCase):
+    def test_errors(self):
+        def test_invalid_input_dim():
+            array = np.array([], dtype=np.float32)
+            x = paddle.to_tensor(np.reshape(array, [0]), dtype='int32')
+            layer = paddle.incubate.nn.FusedTransformerEncoderLayer(
+                108, 108, 108, 0.0, 'relu'
+            )
+            out = layer(x)
+
+        self.assertRaises(ValueError, test_invalid_input_dim)
 
 
 if __name__ == "__main__":

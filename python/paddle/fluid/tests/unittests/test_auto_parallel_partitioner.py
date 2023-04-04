@@ -16,11 +16,8 @@ import unittest
 import unittest.mock
 
 import paddle
-import paddle.nn as nn
 import paddle.nn.functional as F
-import paddle.static as static
-import paddle.tensor as tensor
-import paddle.utils as utils
+from paddle import nn, static, tensor, utils
 from paddle.distributed import fleet
 from paddle.distributed.auto_parallel.completion import Completer
 from paddle.distributed.auto_parallel.dist_context import DistributedContext
@@ -105,7 +102,7 @@ def initialization_check(
 ):
     if 'mp' in mode:
         group_ranks = _get_comm_group(
-            process_mesh.processes, process_mesh.topology, mp_parallel_axis, 3
+            process_mesh.process_ids, process_mesh.shape, mp_parallel_axis, 3
         )
         mp_ring_id = new_process_group(group_ranks).id
         broadcast_ops = [
@@ -124,7 +121,7 @@ def initialization_check(
 
     if 'dp' in mode:
         group_ranks = _get_comm_group(
-            process_mesh.processes, process_mesh.topology, dp_parallel_axis, 3
+            process_mesh.process_ids, process_mesh.shape, dp_parallel_axis, 3
         )
         dp_ring_id = new_process_group(group_ranks).id
         nparam = len(serial_startup_prog.all_parameters())

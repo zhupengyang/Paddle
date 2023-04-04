@@ -52,6 +52,7 @@ void IRPassManager::CreatePasses(Argument *argument,
   for (const std::string &pass_name : passes) {
     auto pass = framework::ir::PassRegistry::Instance().Get(pass_name);
     pass->Set("use_varseqlen", new bool(argument->tensorrt_use_varseqlen()));
+    pass->Set("use_cutlass", new bool(argument->use_cutlass()));
     pass->Set("with_interleaved",
               new bool(argument->tensorrt_with_interleaved()));
     pass->Set("tensorrt_transformer_posid",
@@ -80,6 +81,10 @@ void IRPassManager::CreatePasses(Argument *argument,
     pass->Set("optim_shape_tensor",
               new std::map<std::string, std::vector<int>>());
 
+    // This gpu_device_id is used by some fp16 precision passes, so move it
+    // here.
+    pass->Set("gpu_device_id", new int(argument->gpu_device_id()));
+
     // tuned trt dynamic_shape
     pass->Set("trt_tuned_dynamic_shape",
               new bool(argument->tensorrt_tuned_dynamic_shape()));
@@ -94,9 +99,14 @@ void IRPassManager::CreatePasses(Argument *argument,
         "mixed_black_list",
         new std::unordered_set<std::string>(argument->mixed_black_list()));
     pass->Set("enable_gpu_mixed", new bool(argument->enable_gpu_mixed()));
+    pass->Set("enable_custom_device_mixed",
+              new bool(argument->enable_custom_device_mixed()));
     pass->Set("mixed_precision_mode",
               new int(argument->mixed_precision_mode()));
     pass->Set("model_precision", new int(argument->model_precision()));
+
+    // "use_xpu" is used for passes in subgraphs.
+    pass->Set("use_xpu", new bool(argument->use_xpu()));
 
     if (pass_name == "graph_viz_pass") {
       std::string optim_cache_dir = argument->optim_cache_dir();
@@ -198,7 +208,6 @@ void IRPassManager::CreatePasses(Argument *argument,
             "model_opt_cache_dir",
             new std::string(GetOrCreateModelOptCacheDir(model_opt_cache_dir)));
       }
-      pass->Set("gpu_device_id", new int(argument->gpu_device_id()));
       pass->Set("use_static_engine", new bool(use_static_engine));
       pass->Set("model_from_memory", new bool(argument->model_from_memory()));
       pass->Set("use_inspector", new bool(argument->tensorrt_use_inspector()));
@@ -254,7 +263,6 @@ void IRPassManager::CreatePasses(Argument *argument,
       pass->Set("enable_int8", new bool(lite_enable_int8));
       pass->Set("use_gpu", new bool(argument->use_gpu()));
       pass->Set("zero_copy", new bool(argument->lite_zero_copy()));
-      pass->Set("use_xpu", new bool(argument->use_xpu()));
       pass->Set("xpu_l3_workspace_size",
                 new int(argument->xpu_l3_workspace_size()));
       pass->Set("use_opencl", new bool(argument->use_opencl()));

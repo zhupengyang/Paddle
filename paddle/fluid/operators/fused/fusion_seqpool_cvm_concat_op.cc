@@ -17,7 +17,7 @@
 #include <string>
 #include <vector>
 
-#include "paddle/fluid/operators/jit/kernels.h"
+#include "paddle/phi/kernels/funcs/jit/kernels.h"
 
 namespace paddle {
 namespace operators {
@@ -67,10 +67,10 @@ void FusionSeqPoolCVMConcatOp::InferShape(
   ctx->SetOutputDim("Out", {-1, ins_dims[0][axis] * static_cast<int>(n)});
 }
 
-framework::OpKernelType FusionSeqPoolCVMConcatOp::GetExpectedKernelType(
+phi::KernelKey FusionSeqPoolCVMConcatOp::GetExpectedKernelType(
     const framework::ExecutionContext& ctx) const {
-  return framework::OpKernelType(
-      OperatorWithKernel::IndicateVarDataType(ctx, "X"), ctx.GetPlace());
+  return phi::KernelKey(OperatorWithKernel::IndicateVarDataType(ctx, "X"),
+                        ctx.GetPlace());
 }
 
 void FusionSeqPoolCVMConcatOpMaker::Make() {
@@ -122,15 +122,15 @@ class FusionSeqPoolCVMConcatKernel : public framework::OpKernel<T> {
                       0,
                       paddle::platform::errors::InvalidArgument(
                           "The output of dims[1] should be dividable of w"));
-    jit::seq_pool_attr_t attr(w, jit::SeqPoolType::kSum);
+    phi::jit::seq_pool_attr_t attr(w, phi::jit::SeqPoolType::kSum);
     if (pooltype == "AVERAGE") {
-      attr.type = jit::SeqPoolType::kAvg;
+      attr.type = phi::jit::SeqPoolType::kAvg;
     } else if (pooltype == "SQRT") {
-      attr.type = jit::SeqPoolType::kSqrt;
+      attr.type = phi::jit::SeqPoolType::kSqrt;
     }
-    auto seqpool =
-        jit::KernelFuncs<jit::SeqPoolTuple<T>, platform::CPUPlace>::Cache().At(
-            attr);
+    auto seqpool = phi::jit::KernelFuncs<phi::jit::SeqPoolTuple<T>,
+                                         platform::CPUPlace>::Cache()
+                       .At(attr);
     size_t n = ins.size();
     size_t dst_step_size = n * w;
     for (size_t i = 0; i < n; ++i) {

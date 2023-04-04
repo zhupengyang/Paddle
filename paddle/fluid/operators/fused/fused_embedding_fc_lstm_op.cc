@@ -169,11 +169,11 @@ void FusedEmbeddingFCLSTMOp::InferShape(
   ctx->ShareLoD("Ids", "XX");
 }
 
-framework::OpKernelType FusedEmbeddingFCLSTMOp::GetExpectedKernelType(
+phi::KernelKey FusedEmbeddingFCLSTMOp::GetExpectedKernelType(
     const framework::ExecutionContext& ctx) const {
-  return framework::OpKernelType(
+  return phi::KernelKey(
       OperatorWithKernel::IndicateVarDataType(ctx, "Embeddings"),
-      ctx.device_context());
+      ctx.GetPlace());
 }
 
 void FusedEmbeddingFCLSTMOpMaker::Make() {
@@ -411,7 +411,8 @@ class FusedEmbeddingFCLSTMKernel : public framework::OpKernel<T> {
     T* xx_data = xx->mutable_data<T>(place);
     T* h_out_data = hidden_out->mutable_data<T>(place);
     T* c_out_data = cell_out->mutable_data<T>(place);
-    auto blas = phi::funcs::GetBlas<DeviceContext, T>(ctx);
+    auto& dev_ctx = ctx.template device_context<DeviceContext>();
+    auto blas = phi::funcs::GetBlas<DeviceContext, T>(dev_ctx);
 
     for (int64_t i = 0; i < ids_numel; ++i) {
       PADDLE_ENFORCE_LT(

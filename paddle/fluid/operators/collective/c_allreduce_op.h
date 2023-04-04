@@ -22,7 +22,6 @@ limitations under the License. */
 #include "paddle/fluid/framework/op_registry.h"
 #include "paddle/fluid/memory/memcpy.h"
 #include "paddle/fluid/memory/memory.h"
-#include "paddle/fluid/platform/device/npu/npu_op_runner.h"
 #include "paddle/phi/api/include/tensor.h"
 
 #if defined(PADDLE_WITH_NCCL) || defined(PADDLE_WITH_RCCL) ||          \
@@ -46,7 +45,6 @@ limitations under the License. */
 #endif
 
 #if defined(PADDLE_WITH_ASCEND_CL)
-#include "paddle/fluid/platform/device/npu/hccl_helper.h"
 #endif
 
 #if defined(PADDLE_WITH_CNCL)
@@ -71,21 +69,23 @@ class CAllReduceOp : public framework::OperatorWithKernel {
   }
 
  protected:
-  framework::OpKernelType GetExpectedKernelType(
+  phi::KernelKey GetExpectedKernelType(
       const framework::ExecutionContext& ctx) const override {
-    return framework::OpKernelType(
-        OperatorWithKernel::IndicateVarDataType(ctx, "X"), ctx.GetPlace());
+    return phi::KernelKey(OperatorWithKernel::IndicateVarDataType(ctx, "X"),
+                          ctx.GetPlace());
   }
 
-  framework::OpKernelType GetKernelTypeForVar(
+  phi::KernelKey GetKernelTypeForVar(
       const std::string& var_name,
       const phi::DenseTensor& tensor,
-      const framework::OpKernelType& expected_kernel_type) const {
+      const phi::KernelKey& expected_kernel_type) const {
     if (var_name == "Cond") {
-      return expected_kernel_type;
+      return phi::KernelKey(phi::Backend::ALL_BACKEND,
+                            expected_kernel_type.layout(),
+                            expected_kernel_type.dtype());
     } else {
-      return framework::OpKernelType(
-          expected_kernel_type.data_type_, tensor.place(), tensor.layout());
+      return phi::KernelKey(
+          tensor.place(), tensor.layout(), expected_kernel_type.dtype());
     }
   }
 };
@@ -145,6 +145,10 @@ class CAllReduceOpCPUKernel : public framework::OpKernel<T> {
 #endif
   }
 };
+
+#define DEFINE_C_ALLREDUCE_CPU_KERNEL(op_name, red_type) \
+  template <typename T, typename DeviceContext>          \
+  class op_name##CPUKernel : public CAllReduceOpCPUKernel<red_type, T> {};
 
 #if defined(PADDLE_WITH_ASCEND_CL)
 // return true if found_nan or return false;
@@ -524,6 +528,10 @@ class CAllReduceOpCUDAKernel : public framework::OpKernel<T> {
 #endif
   }
 };
+
+#define DEFINE_C_ALLREDUCE_CUDA_KERNEL(op_name, red_type) \
+  template <typename T, typename DeviceContext>           \
+  class op_name##CUDAKernel : public CAllReduceOpCUDAKernel<red_type, T> {};
 
 template <ReduceType red_type, typename T>
 class CAllReduceOpMLUKernel : public framework::OpKernel<T> {

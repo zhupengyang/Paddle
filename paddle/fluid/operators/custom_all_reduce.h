@@ -248,7 +248,7 @@ class CustomNCCLCommImpl : public CustomNCCLComm {
       t_.Resize(dim);
       void *ptr =
           t_.AllocateFrom(SystemCUDAAllocator::Instance(),
-                          paddle::experimental::CppTypeToDataType<T>::Type());
+                          phi::CppTypeToDataType<T>::Type());
       init_func(*(comm->ctx_), &t_);
       comm->ctx_->Wait();
 
@@ -413,7 +413,7 @@ class CustomNCCLCommImpl : public CustomNCCLComm {
 #define PD_CUSTOM_ALLREDUCE(__cpp_dtype, __vec_size)                      \
   do {                                                                    \
     if (dtype ==                                                          \
-        ::paddle::experimental::CppTypeToDataType<__cpp_dtype>::Type()) { \
+        ::phi::CppTypeToDataType<__cpp_dtype>::Type()) { \
       if (algo == 1) {                                                    \
         return OneShotAllReduceImpl<__cpp_dtype, __vec_size>(numel);      \
       } else {                                                            \
@@ -431,7 +431,7 @@ class CustomNCCLCommImpl : public CustomNCCLComm {
 
  private:
   uint32_t ChooseAlgo(size_t numel,
-                      paddle::experimental::DataType dtype) const {
+                      phi::DataType dtype) const {
     auto sizeof_dtype = phi::SizeOf(dtype);
     auto mem_size = numel * sizeof_dtype;
     if (mem_size <= one_shot_max_size_) {
@@ -448,7 +448,7 @@ class CustomNCCLCommImpl : public CustomNCCLComm {
 
   void NCCLAllReduce(void *ptr,
                      size_t numel,
-                     paddle::experimental::DataType dtype) {
+                     phi::DataType dtype) {
     auto nccl_dtype = platform::ToNCCLDataType(dtype);
     PADDLE_ENFORCE_GPU_SUCCESS(phi::dynload::ncclAllReduce(
         ptr, ptr, numel, nccl_dtype, ncclSum, comm_, ctx_->stream()));

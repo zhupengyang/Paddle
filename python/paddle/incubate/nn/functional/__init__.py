@@ -21,6 +21,8 @@ from .fused_ec_moe import fused_ec_moe
 from .cutlass_fused_multi_head_attention import (
     cutlass_fused_multi_head_attention, mem_efficient_attention_variable,
 )
+from .fused_dropout_add import fused_dropout_add
+
 
 __all__ = [
     'fused_multi_head_attention',
@@ -32,4 +34,5 @@ __all__ = [
     'fused_ec_moe',
     'cutlass_fused_multi_head_attention',
     'mem_efficient_attention_variable',
+    'fused_dropout_add',
 ]

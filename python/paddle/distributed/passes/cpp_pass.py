@@ -71,6 +71,32 @@ class FuseReluDepthwiseConvPass(CPPPassWrapper):
         return PassType.FUSION_OPT
 
 
+@register_pass("fused_attention")
+class FusedAttentionPass(CPPPassWrapper):
+    def __init__(self):
+        super().__init__()
+
+    @property
+    def cpp_name(self):
+        return "fused_attention_pass"
+
+    def _type(self):
+        return PassType.FUSION_OPT
+
+
+@register_pass("fused_feedforward")
+class FusedFeedforwardPass(CPPPassWrapper):
+    def __init__(self):
+        super().__init__()
+
+    @property
+    def cpp_name(self):
+        return "fused_feedforward_pass"
+
+    def _type(self):
+        return PassType.FUSION_OPT
+
+
 @register_pass("fuse_gemm_epilogue")
 class FuseGemmEpiloguePass(CPPPassWrapper):
     def __init__(self):
@@ -79,6 +105,19 @@ class FuseGemmEpiloguePass(CPPPassWrapper):
     @property
     def cpp_name(self):
         return "fuse_gemm_epilogue_pass"
+
+    def _type(self):
+        return PassType.FUSION_OPT
+
+
+@register_pass("fuse_adamw")
+class FuseAdamWPass(CPPPassWrapper):
+    def __init__(self):
+        super().__init__()
+
+    @property
+    def cpp_name(self):
+        return "fuse_adamw_op_pass"
 
     def _type(self):
         return PassType.FUSION_OPT

@@ -68,11 +68,10 @@ class DequantizeMaxAbsOp : public framework::OperatorWithKernel {
     ctx->ShareLoD("X", /*->*/ "Out");
   }
 
-  framework::OpKernelType GetExpectedKernelType(
+  phi::KernelKey GetExpectedKernelType(
       const framework::ExecutionContext& ctx) const override {
     auto data_type = OperatorWithKernel::IndicateVarDataType(ctx, "X");
-    auto type = framework::OpKernelType(data_type, ctx.device_context());
-    return type;
+    return phi::KernelKey(data_type, ctx.device_context().GetPlace());
   }
 };
 
@@ -102,7 +101,6 @@ $$Out = \frac{scale*X}{ max\_range }$$
 }  // namespace paddle
 
 namespace ops = paddle::operators;
-using CPU = phi::CPUContext;
 
 REGISTER_OPERATOR(
     dequantize_abs_max,
@@ -110,6 +108,10 @@ REGISTER_OPERATOR(
     ops::DequantizeMaxAbsOpMaker,
     paddle::framework::EmptyGradOpMaker<paddle::framework::OpDesc>,
     paddle::framework::EmptyGradOpMaker<paddle::imperative::OpBase>);
-REGISTER_OP_CPU_KERNEL(dequantize_abs_max,
-                       ops::DequantizeMaxAbsKernel<CPU, int8_t>,
-                       ops::DequantizeMaxAbsKernel<CPU, int16_t>);
+
+PD_REGISTER_STRUCT_KERNEL(dequantize_abs_max,
+                          CPU,
+                          ALL_LAYOUT,
+                          ops::DequantizeMaxAbsKernel,
+                          int8_t,
+                          int16_t) {}

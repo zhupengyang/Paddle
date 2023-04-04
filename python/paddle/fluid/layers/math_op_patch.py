@@ -98,8 +98,7 @@ def monkey_patch_variable():
         return var
 
     def create_scalar(block, value, dtype):
-        # TODO(zhouwei): will change to [] which is 0-D Tensor
-        return create_tensor(block, value, dtype, shape=[1])
+        return create_tensor(block, value, dtype, shape=[])
 
     def create_tensor_with_batchsize(ref_var, value, dtype):
         assert isinstance(ref_var, Variable)
@@ -155,12 +154,12 @@ def monkey_patch_variable():
     @static_only
     def place(self):
         """
-        Variable don't have 'place' interface in static mode
+        Variable don't have 'place' interface in static graph mode
         But this interface can greatly facilitate dy2static.
         So we give a warnning here and return None.
         """
         warnings.warn(
-            "Variable do not have 'place' interface for static mode, try not to use it. None will be returned."
+            "Variable do not have 'place' interface for static graph mode, try not to use it. None will be returned."
         )
         return None
 
@@ -184,13 +183,13 @@ def monkey_patch_variable():
             In Static Graph Mode:
 
             .. code-block:: python
-
+                import paddle
                 import paddle.fluid as fluid
-
+                paddle.enable_static()
                 startup_prog = fluid.Program()
                 main_prog = fluid.Program()
                 with fluid.program_guard(startup_prog, main_prog):
-                    original_variable = fluid.data(name = "new_variable", shape=[2,2], dtype='float32')
+                    original_variable = paddle.static.data(name = "new_variable", shape=[2,2], dtype='float32')
                     new_variable = original_variable.astype('int64')
                     print("new var's dtype is: {}".format(new_variable.dtype))
 
@@ -381,21 +380,19 @@ def monkey_patch_variable():
             lhs_dtype = safe_get_dtype(self)
             if not isinstance(other_var, Variable):
                 if reverse:
-                    has_batch_size = False
                     for elem in self.shape:
                         if elem < 0:
-                            has_batch_size = True
+                            other_var = create_tensor_with_batchsize(
+                                self, other_var, lhs_dtype
+                            )
                             break
-                    if not has_batch_size:
+                    else:
+                        # when break is not triggered, enter the else branch
                         other_var = create_tensor(
                             current_block(self),
                             other_var,
                             dtype=lhs_dtype,
                             shape=self.shape,
-                        )
-                    else:
-                        other_var = create_tensor_with_batchsize(
-                            self, other_var, lhs_dtype
                         )
                 else:
                     # add fill_op to current_block

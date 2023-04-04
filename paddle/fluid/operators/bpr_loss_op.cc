@@ -56,11 +56,10 @@ class BprLossOp : public framework::OperatorWithKernel {
  protected:
   // Explicitly set that the data type of computation kernel of Seq-bpr
   // is determined by its input "X".
-  framework::OpKernelType GetExpectedKernelType(
+  phi::KernelKey GetExpectedKernelType(
       const framework::ExecutionContext& ctx) const override {
-    return framework::OpKernelType(
-        OperatorWithKernel::IndicateVarDataType(ctx, "X"),
-        platform::CPUPlace());
+    return phi::KernelKey(OperatorWithKernel::IndicateVarDataType(ctx, "X"),
+                          platform::CPUPlace());
   }
 };
 
@@ -119,11 +118,10 @@ class BprLossGradientOp : public framework::OperatorWithKernel {
  protected:
   // Explicitly set that the data type of computation kernel of cross_entropy
   // is determined by its input "X".
-  framework::OpKernelType GetExpectedKernelType(
+  phi::KernelKey GetExpectedKernelType(
       const framework::ExecutionContext& ctx) const override {
-    return framework::OpKernelType(
-        OperatorWithKernel::IndicateVarDataType(ctx, "X"),
-        platform::CPUPlace());
+    return phi::KernelKey(OperatorWithKernel::IndicateVarDataType(ctx, "X"),
+                          platform::CPUPlace());
   }
 };
 
@@ -176,7 +174,6 @@ class BprLossGradMaker : public framework::SingleGradOpMaker<T> {
 }  // namespace paddle
 
 namespace ops = paddle::operators;
-using CPUCtx = phi::CPUContext;
 
 REGISTER_OPERATOR(bpr_loss,
                   ops::BprLossOp,
@@ -184,9 +181,12 @@ REGISTER_OPERATOR(bpr_loss,
                   ops::BprLossGradMaker<paddle::framework::OpDesc>,
                   ops::BprLossGradMaker<paddle::imperative::OpBase>);
 REGISTER_OPERATOR(bpr_loss_grad, ops::BprLossGradientOp);
-REGISTER_OP_CPU_KERNEL(bpr_loss,
-                       ops::BprLossOpKernel<CPUCtx, float>,
-                       ops::BprLossOpKernel<CPUCtx, double>);
-REGISTER_OP_CPU_KERNEL(bpr_loss_grad,
-                       ops::BprLossGradientOpKernel<CPUCtx, float>,
-                       ops::BprLossGradientOpKernel<CPUCtx, double>);
+
+PD_REGISTER_STRUCT_KERNEL(
+    bpr_loss, CPU, ALL_LAYOUT, ops::BprLossOpKernel, float, double) {}
+PD_REGISTER_STRUCT_KERNEL(bpr_loss_grad,
+                          CPU,
+                          ALL_LAYOUT,
+                          ops::BprLossGradientOpKernel,
+                          float,
+                          double) {}

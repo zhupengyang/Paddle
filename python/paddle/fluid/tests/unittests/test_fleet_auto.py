@@ -16,7 +16,7 @@ import os
 import unittest
 
 import paddle
-import paddle.distributed.fleet as fleet
+from paddle.distributed import fleet
 
 paddle.enable_static()
 
@@ -32,14 +32,12 @@ class TestDistributedStrategyAuto(unittest.TestCase):
 
     def test_distributed_strategy_auto(self):
         fleet.init(is_collective=True)
-        input_x = paddle.fluid.layers.data(
-            name="x", shape=[32], dtype='float32'
-        )
-        input_y = paddle.fluid.layers.data(name="y", shape=[1], dtype='int64')
+        input_x = paddle.static.data(name="x", shape=[-1, 32], dtype='float32')
+        input_y = paddle.static.data(name="y", shape=[-1, 1], dtype='int64')
 
-        fc_1 = paddle.fluid.layers.fc(input=input_x, size=64, act='tanh')
-        fc_2 = paddle.fluid.layers.fc(input=fc_1, size=64, act='tanh')
-        prediction = paddle.fluid.layers.fc(input=[fc_2], size=2, act='softmax')
+        fc_1 = paddle.static.nn.fc(x=input_x, size=64, activation='tanh')
+        fc_2 = paddle.static.nn.fc(x=fc_1, size=64, activation='tanh')
+        prediction = paddle.static.nn.fc(x=[fc_2], size=2, activation='softmax')
         cost = paddle.nn.functional.cross_entropy(
             input=prediction, label=input_y, reduction='none', use_softmax=False
         )
@@ -52,7 +50,7 @@ class TestDistributedStrategyAuto(unittest.TestCase):
         optimizer.minimize(avg_cost)
 
         applied_meta_list = fleet._get_applied_meta_list()
-        print("applied_meta_list: {}".format(applied_meta_list))
+        print(f"applied_meta_list: {applied_meta_list}")
 
 
 if __name__ == "__main__":

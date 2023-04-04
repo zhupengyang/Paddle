@@ -22,7 +22,6 @@ limitations under the License. */
 #endif
 
 #include "paddle/fluid/distributed/collective/process_group.h"
-#include "paddle/fluid/distributed/collective/process_group_stream.h"
 #include "paddle/fluid/distributed/collective/reducer.h"
 #include "paddle/fluid/distributed/collective/types.h"
 #include "paddle/fluid/framework/lod_tensor.h"
@@ -47,7 +46,6 @@ limitations under the License. */
 
 #if defined(PADDLE_WITH_GLOO)
 #include "paddle/fluid/distributed/collective/process_group_gloo.h"
-#include "paddle/fluid/distributed/store/tcp_store.h"
 #endif
 
 #if defined(PADDLE_WITH_XPU_BKCL)
@@ -61,7 +59,7 @@ namespace py = pybind11;
 namespace paddle {
 namespace pybind {
 
-using Tensor = paddle::experimental::Tensor;
+using Tensor = paddle::Tensor;
 
 std::shared_ptr<distributed::EagerReducer> CreateEagerReducer(
     py::handle py_tensors,
@@ -114,6 +112,10 @@ void BindDistributed(py::module *m) {
       .def(py::init<>())
       .def_readwrite("reduce_op", &distributed::ReduceOptions::reduce_op)
       .def_readwrite("source_root", &distributed::ReduceOptions::root_rank);
+
+  py::class_<distributed::GatherOptions>(*m, "GatherOptions")
+      .def(py::init<>())
+      .def_readwrite("root_rank", &distributed::GatherOptions::root_rank);
 
   auto ProcessGroup =
       py::class_<distributed::ProcessGroup,
@@ -255,9 +257,9 @@ void BindDistributed(py::module *m) {
                  bool sync_op) {
                 auto out_tensor_list =
                     CastPyArg2VectorOfTensor(py_out_tensor_list.ptr(), 0);
-                Tensor concat_out_tensor = paddle::concat(out_tensor_list, 0);
+                Tensor stack_out_tensor = paddle::stack(out_tensor_list, 0);
                 auto p_out_tensor = std::dynamic_pointer_cast<phi::DenseTensor>(
-                    concat_out_tensor.impl());
+                    stack_out_tensor.impl());
                 auto *out_dense = p_out_tensor.get();
 
                 auto in_tensor = CastPyArg2Tensor(py_in_tensor.ptr(), 0);
@@ -307,16 +309,16 @@ void BindDistributed(py::module *m) {
                  bool sync_op) {
                 auto out_tensor_list =
                     CastPyArg2VectorOfTensor(py_out_tensor_list.ptr(), 0);
-                Tensor concat_out_tensor = paddle::concat(out_tensor_list, 0);
+                Tensor stack_out_tensor = paddle::stack(out_tensor_list, 0);
                 auto p_out_tensor = std::dynamic_pointer_cast<phi::DenseTensor>(
-                    concat_out_tensor.impl());
+                    stack_out_tensor.impl());
                 auto *out_dense = p_out_tensor.get();
 
                 auto in_tensor_list =
                     CastPyArg2VectorOfTensor(py_in_tensor_list.ptr(), 0);
-                Tensor concat_in_tensor = paddle::concat(in_tensor_list, 0);
+                Tensor stack_in_tensor = paddle::stack(in_tensor_list, 0);
                 auto p_in_tensor = std::dynamic_pointer_cast<phi::DenseTensor>(
-                    concat_in_tensor.impl());
+                    stack_in_tensor.impl());
                 auto in_dense = *p_in_tensor;
 
                 // in_tensor_list should not be empty
@@ -430,9 +432,9 @@ void BindDistributed(py::module *m) {
 
                 auto in_tensor_list =
                     CastPyArg2VectorOfTensor(py_in_tensor_list.ptr(), 0);
-                Tensor concat_in_tensor = paddle::concat(in_tensor_list, 0);
+                Tensor stack_in_tensor = paddle::stack(in_tensor_list, 0);
                 auto p_in_tensor = std::dynamic_pointer_cast<phi::DenseTensor>(
-                    concat_in_tensor.impl());
+                    stack_in_tensor.impl());
                 auto in_dense = *p_in_tensor;
 
                 distributed::ReduceScatterOptions opts{op};
@@ -484,9 +486,9 @@ void BindDistributed(py::module *m) {
 
                 auto in_tensor_list =
                     CastPyArg2VectorOfTensor(py_in_tensor_list.ptr(), 0);
-                Tensor concat_in_tensor = paddle::concat(in_tensor_list, 0);
+                Tensor stack_in_tensor = paddle::stack(in_tensor_list, 0);
                 auto p_in_tensor = std::dynamic_pointer_cast<phi::DenseTensor>(
-                    concat_in_tensor.impl());
+                    stack_in_tensor.impl());
                 auto in_dense = *p_in_tensor;
 
                 distributed::ScatterOptions opts{src};
@@ -523,7 +525,44 @@ void BindDistributed(py::module *m) {
               py::arg("src"),
               py::arg("sync_op"),
               py::call_guard<py::gil_scoped_release>())
+          .def(
+              "gather",
+              [](distributed::ProcessGroup &self,
+                 py::handle py_in_tensor,
+                 py::handle py_gather_tensor_list,
+                 int dst,
+                 bool sync_op,
+                 bool use_calc_stream) {
+                auto out_tensor_list =
+                    CastPyArg2VectorOfTensor(py_gather_tensor_list.ptr(), 0);
+                Tensor stack_out_tensor = paddle::stack(out_tensor_list, 0);
+                auto p_out_tensor = std::dynamic_pointer_cast<phi::DenseTensor>(
+                    stack_out_tensor.impl());
+                auto *out_dense = p_out_tensor.get();
 
+                auto in_tensor = CastPyArg2Tensor(py_in_tensor.ptr(), 0);
+                auto p_in_tensor = std::dynamic_pointer_cast<phi::DenseTensor>(
+                    in_tensor.impl());
+                auto in_dense = *p_in_tensor;
+
+                auto *dev_ctx =
+                    self.GetDeviceContext(in_tensor.place(), use_calc_stream);
+                distributed::GatherOptions gather_ops{dst};
+                auto task = self.Gather(
+                    out_dense, in_dense, gather_ops, sync_op, use_calc_stream);
+                SplitTensor(*dev_ctx, *out_dense, &out_tensor_list);
+                if (!use_calc_stream) {
+                  // calculate stream will wait comm stream
+                  task->UpdateWaitChain(*dev_ctx);
+                }
+                return task;
+              },
+              py::arg("in"),
+              py::arg("out"),
+              py::arg("dst"),
+              py::arg("sync_op"),
+              py::arg("use_calc_stream"),
+              py::call_guard<py::gil_scoped_release>())
           .def(
               "barrier",
               [](distributed::ProcessGroup &self, int8_t device_id) {
@@ -733,22 +772,18 @@ void BindDistributed(py::module *m) {
               py::arg("in"),
               py::arg("out"),
               py::arg("src"),
-              py::call_guard<py::gil_scoped_release>());
+              py::call_guard<py::gil_scoped_release>())
 
-  auto ProcessGroupStream =
-      py::class_<distributed::ProcessGroupStream,
-                 std::shared_ptr<distributed::ProcessGroupStream>>(
-          *m, "ProcessGroupStream", ProcessGroup)
           .def(
               "all_gather_on_calc_stream",
-              [](distributed::ProcessGroupStream &self,
+              [](distributed::ProcessGroup &self,
                  py::handle py_out_tensor_list,
                  py::handle py_in_tensor) {
                 auto out_tensor_list =
                     CastPyArg2VectorOfTensor(py_out_tensor_list.ptr(), 0);
-                Tensor concat_out_tensor = paddle::concat(out_tensor_list, 0);
+                Tensor stack_out_tensor = paddle::stack(out_tensor_list, 0);
                 auto p_out_tensor = std::dynamic_pointer_cast<phi::DenseTensor>(
-                    concat_out_tensor.impl());
+                    stack_out_tensor.impl());
                 auto *out_dense = p_out_tensor.get();
 
                 auto in_tensor = CastPyArg2Tensor(py_in_tensor.ptr(), 0);
@@ -770,7 +805,7 @@ void BindDistributed(py::module *m) {
 
           .def(
               "all_gather_into_tensor_on_calc_stream",
-              [](distributed::ProcessGroupStream &self,
+              [](distributed::ProcessGroup &self,
                  py::handle py_out_tensor,
                  py::handle py_in_tensor) {
                 auto out_tensor = CastPyArg2Tensor(py_out_tensor.ptr(), 0);
@@ -794,7 +829,7 @@ void BindDistributed(py::module *m) {
 
           .def(
               "all_gather_partial_on_calc_stream",
-              [](distributed::ProcessGroupStream &self,
+              [](distributed::ProcessGroup &self,
                  py::handle py_out_tensor,
                  py::handle py_in_tensor,
                  int nranks,
@@ -828,7 +863,7 @@ void BindDistributed(py::module *m) {
 
           .def(
               "all_reduce_on_calc_stream",
-              [](distributed::ProcessGroupStream &self,
+              [](distributed::ProcessGroup &self,
                  py::handle py_tensor,
                  distributed::ReduceOp op) {
                 auto tensor = CastPyArg2Tensor(py_tensor.ptr(), 0);
@@ -849,21 +884,21 @@ void BindDistributed(py::module *m) {
 
           .def(
               "all_to_all_on_calc_stream",
-              [](distributed::ProcessGroupStream &self,
+              [](distributed::ProcessGroup &self,
                  py::handle py_out_tensor_list,
                  py::handle py_in_tensor_list) {
                 auto out_tensor_list =
                     CastPyArg2VectorOfTensor(py_out_tensor_list.ptr(), 0);
-                Tensor concat_out_tensor = paddle::concat(out_tensor_list, 0);
+                Tensor stack_out_tensor = paddle::stack(out_tensor_list, 0);
                 auto p_out_tensor = std::dynamic_pointer_cast<phi::DenseTensor>(
-                    concat_out_tensor.impl());
+                    stack_out_tensor.impl());
                 auto *out_dense = p_out_tensor.get();
 
                 auto in_tensor_list =
                     CastPyArg2VectorOfTensor(py_in_tensor_list.ptr(), 0);
-                Tensor concat_in_tensor = paddle::concat(in_tensor_list, 0);
+                Tensor stack_in_tensor = paddle::stack(in_tensor_list, 0);
                 auto p_in_tensor = std::dynamic_pointer_cast<phi::DenseTensor>(
-                    concat_in_tensor.impl());
+                    stack_in_tensor.impl());
                 auto in_dense = *p_in_tensor;
 
                 // in_tensor_list should not be empty
@@ -886,7 +921,7 @@ void BindDistributed(py::module *m) {
 
           .def(
               "all_to_all_tensor_on_calc_stream",
-              [](distributed::ProcessGroupStream &self,
+              [](distributed::ProcessGroup &self,
                  py::handle py_out_tensor,
                  py::handle py_in_tensor) {
                 auto out_tensor = CastPyArg2Tensor(py_out_tensor.ptr(), 0);
@@ -914,7 +949,7 @@ void BindDistributed(py::module *m) {
 
           .def(
               "all_to_all_single_on_calc_stream",
-              [](distributed::ProcessGroupStream &self,
+              [](distributed::ProcessGroup &self,
                  py::handle py_out_tensor,
                  py::handle py_in_tensor,
                  const std::vector<int64_t> &out_sizes,
@@ -944,7 +979,7 @@ void BindDistributed(py::module *m) {
 
           .def(
               "broadcast_on_calc_stream",
-              [](distributed::ProcessGroupStream &self,
+              [](distributed::ProcessGroup &self,
                  py::handle py_tensor,
                  int src) {
                 auto tensor = CastPyArg2Tensor(py_tensor.ptr(), 0);
@@ -965,7 +1000,7 @@ void BindDistributed(py::module *m) {
 
           .def(
               "reduce_on_calc_stream",
-              [](distributed::ProcessGroupStream &self,
+              [](distributed::ProcessGroup &self,
                  py::handle py_tensor,
                  int dst,
                  distributed::ReduceOp op) {
@@ -988,7 +1023,7 @@ void BindDistributed(py::module *m) {
 
           .def(
               "reduce_scatter_on_calc_stream",
-              [](distributed::ProcessGroupStream &self,
+              [](distributed::ProcessGroup &self,
                  py::handle py_out_tensor,
                  py::handle py_in_tensor_list,
                  distributed::ReduceOp op) {
@@ -999,9 +1034,9 @@ void BindDistributed(py::module *m) {
 
                 auto in_tensor_list =
                     CastPyArg2VectorOfTensor(py_in_tensor_list.ptr(), 0);
-                Tensor concat_in_tensor = paddle::concat(in_tensor_list, 0);
+                Tensor stack_in_tensor = paddle::stack(in_tensor_list, 0);
                 auto p_in_tensor = std::dynamic_pointer_cast<phi::DenseTensor>(
-                    concat_in_tensor.impl());
+                    stack_in_tensor.impl());
                 auto in_dense = *p_in_tensor;
 
                 distributed::ReduceScatterOptions opts{op};
@@ -1018,7 +1053,7 @@ void BindDistributed(py::module *m) {
 
           .def(
               "reduce_scatter_tensor_on_calc_stream",
-              [](distributed::ProcessGroupStream &self,
+              [](distributed::ProcessGroup &self,
                  py::handle py_out_tensor,
                  py::handle py_in_tensor,
                  distributed::ReduceOp op) {
@@ -1046,7 +1081,7 @@ void BindDistributed(py::module *m) {
 
           .def(
               "scatter_on_calc_stream",
-              [](distributed::ProcessGroupStream &self,
+              [](distributed::ProcessGroup &self,
                  py::handle py_out_tensor,
                  py::handle py_in_tensor_list,
                  int src) {
@@ -1057,9 +1092,9 @@ void BindDistributed(py::module *m) {
 
                 auto in_tensor_list =
                     CastPyArg2VectorOfTensor(py_in_tensor_list.ptr(), 0);
-                Tensor concat_in_tensor = paddle::concat(in_tensor_list, 0);
+                Tensor stack_in_tensor = paddle::stack(in_tensor_list, 0);
                 auto p_in_tensor = std::dynamic_pointer_cast<phi::DenseTensor>(
-                    concat_in_tensor.impl());
+                    stack_in_tensor.impl());
                 auto in_dense = *p_in_tensor;
 
                 distributed::ScatterOptions opts{src};
@@ -1076,7 +1111,7 @@ void BindDistributed(py::module *m) {
 
           .def(
               "scatter_tensor_on_calc_stream",
-              [](distributed::ProcessGroupStream &self,
+              [](distributed::ProcessGroup &self,
                  py::handle py_out_tensor,
                  py::handle py_in_tensor,
                  int src) {
@@ -1104,7 +1139,7 @@ void BindDistributed(py::module *m) {
 
           .def(
               "send_on_calc_stream",
-              [](distributed::ProcessGroupStream &self,
+              [](distributed::ProcessGroup &self,
                  py::handle py_tensor,
                  int dst) {
                 auto tensor = CastPyArg2Tensor(py_tensor.ptr(), 0);
@@ -1122,7 +1157,7 @@ void BindDistributed(py::module *m) {
 
           .def(
               "send_partial_on_calc_stream",
-              [](distributed::ProcessGroupStream &self,
+              [](distributed::ProcessGroup &self,
                  py::handle py_tensor,
                  int dst_rank,
                  int nranks,
@@ -1151,7 +1186,7 @@ void BindDistributed(py::module *m) {
 
           .def(
               "recv_on_calc_stream",
-              [](distributed::ProcessGroupStream &self,
+              [](distributed::ProcessGroup &self,
                  py::handle py_tensor,
                  int src) {
                 auto tensor = CastPyArg2Tensor(py_tensor.ptr(), 0);
@@ -1169,7 +1204,7 @@ void BindDistributed(py::module *m) {
 
           .def(
               "recv_partial_on_calc_stream",
-              [](distributed::ProcessGroupStream &self,
+              [](distributed::ProcessGroup &self,
                  py::handle py_tensor,
                  int src_rank,
                  int nranks,
@@ -1199,7 +1234,7 @@ void BindDistributed(py::module *m) {
 #if defined(PADDLE_WITH_RCCL) || defined(PADDLE_WITH_NCCL)
   py::class_<distributed::ProcessGroupNCCL,
              std::shared_ptr<distributed::ProcessGroupNCCL>>(
-      *m, "ProcessGroupNCCL", ProcessGroupStream)
+      *m, "ProcessGroupNCCL", ProcessGroup)
       .def_static("create",
                   distributed::ProcessGroupNCCL::CreateProcessGroupNCCL,
                   py::arg("store"),
@@ -1250,14 +1285,16 @@ void BindDistributed(py::module *m) {
   auto processGroupBKCL =
       py::class_<distributed::ProcessGroupBKCL,
                  std::shared_ptr<distributed::ProcessGroupBKCL>>(
-          *m, "ProcessGroupBKCL", ProcessGroupStream)
+          *m, "ProcessGroupBKCL", ProcessGroup)
           .def_static("create",
                       distributed::ProcessGroupBKCL::CreateProcessGroupBKCL,
                       py::arg("store"),
                       py::arg("rank"),
                       py::arg("world_size"),
                       py::arg("group_id") = 0,
-                      py::call_guard<py::gil_scoped_release>());
+                      py::call_guard<py::gil_scoped_release>())
+          .def_static("group_start", distributed::ProcessGroupBKCL::GroupStart)
+          .def_static("group_end", distributed::ProcessGroupBKCL::GroupEnd);
 #endif
 
   py::class_<distributed::ProcessGroup::Task,
@@ -1314,6 +1351,14 @@ void BindDistributed(py::module *m) {
           },
           py::arg("tensors"),
           py::call_guard<py::gil_scoped_release>());
+
+  py::class_<distributed::ProcessGroupIdMap,
+             std::shared_ptr<distributed::ProcessGroupIdMap>>(
+      *m, "ProcessGroupIdMap")
+      .def_static("destroy",
+                  distributed::ProcessGroupIdMap::DestroyProcessGroup,
+                  py::arg("group_id") = 0,
+                  py::call_guard<py::gil_scoped_release>());
 }
 
 }  // end namespace pybind

@@ -41,8 +41,8 @@ from paddle.distributed.auto_parallel.utils import (
     set_grad_var_shape,
 )
 from paddle.distributed.passes import PassContext, new_pass
-from paddle.fluid import program_guard, unique_name
-from paddle.fluid.backward import append_backward
+from paddle.static import append_backward, program_guard
+from paddle.utils import unique_name
 
 from ..utils import get_logger
 from .algorithms import new_algorithm
@@ -89,7 +89,7 @@ def parse_process_groups():
 def get_metric(results):
     assert isinstance(
         results, dict
-    ), "results should be type of dictionary, but got {}.".format(type(results))
+    ), f"results should be type of dictionary, but got {type(results)}."
     if 'Throughtput' in results and isinstance(results['Throughtput'], float):
         return float(results['Throughtput'])
     else:
@@ -114,7 +114,7 @@ def _copy_context(ref_dist_context):
     clear_all_process_groups()
     ranks = []
     for process_mesh in ref_dist_context._process_meshes:
-        ranks.extend(process_mesh.processes)
+        ranks.extend(process_mesh.process_ids)
     new_process_group(list(set(ranks)))
 
     new_dist_context = DistributedContext()
@@ -529,7 +529,7 @@ class OptimizationTuner:
 
     def _evaluate_trial(self, trial):
 
-        self._logger.info("Trial {} evaluation start.".format(trial.name))
+        self._logger.info(f"Trial {trial.name} evaluation start.")
         self._apply_optimization(trial)
 
         if self._config.mode == "PROFILE":
@@ -541,7 +541,7 @@ class OptimizationTuner:
             )
         else:
             raise NotImplementedError(
-                "invalid evaluation mode: {}".format(self._config.mode)
+                f"invalid evaluation mode: {self._config.mode}"
             )
 
         self._logger.info(
@@ -611,7 +611,7 @@ The best trial is: [{}], whose configuration is following:
 
     def tune(self):
         """
-        Performs the search for best hyperparameter configuations
+        Performs the search for best hyperparameter configurations
         for the selected optimization pass(es).
         """
 

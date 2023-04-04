@@ -35,13 +35,15 @@ class DGCMomentumOp : public MomentumOp {
     return MomentumOp::InferShape(ctx);
   }
 
-  framework::OpKernelType GetKernelTypeForVar(
+  phi::KernelKey GetKernelTypeForVar(
       const std::string& var_name,
       const phi::DenseTensor& tensor,
-      const framework::OpKernelType& expected_kernel_type) const override {
+      const phi::KernelKey& expected_kernel_type) const override {
     if (var_name == "current_step" || var_name == "nranks") {
       VLOG(10) << "var_name:" << var_name << " need not to transform";
-      return expected_kernel_type;
+      return phi::KernelKey(phi::Backend::ALL_BACKEND,
+                            expected_kernel_type.layout(),
+                            expected_kernel_type.dtype());
     }
 
     return framework::OperatorWithKernel::GetKernelTypeForVar(
@@ -74,5 +76,5 @@ REGISTER_OP_WITHOUT_GRADIENT(dgc_momentum,
                              ops::DGCMomentumOp,
                              ops::DGCMomentumOpMaker);
 
-REGISTER_OP_CPU_KERNEL(dgc_momentum,
-                       ops::DGCMomentumKernel<phi::CPUContext, float>);
+PD_REGISTER_STRUCT_KERNEL(
+    dgc_momentum, CPU, ALL_LAYOUT, ops::DGCMomentumKernel, float) {}

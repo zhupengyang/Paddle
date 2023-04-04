@@ -12,9 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import unittest as unittest
+import unittest
 
-import paddle.fluid as fluid
+from paddle import fluid
 
 
 class VarInfo:
@@ -55,7 +55,7 @@ class TestGlobalVarGetterSetter(unittest.TestCase):
         self.assertFalse(name in g)
         self.assertFalse(name in g.keys())
         self.assertIsNone(g.get(name, None))
-        self.assertEquals(g.get(name, -1), -1)
+        self.assertEqual(g.get(name, -1), -1)
 
 
 if __name__ == '__main__':

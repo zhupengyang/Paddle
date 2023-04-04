@@ -12,12 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import numpy
+
 import paddle
 from paddle import _C_ops, _legacy_C_ops
+from paddle.common_ops_import import Variable, default_main_program
 from paddle.fluid.layer_helper import LayerHelper
-from paddle.fluid.layers.tensor import fill_constant
 from paddle.framework import core, in_dynamic_mode
-from paddle.static import Variable, default_main_program
 from paddle.tensor.creation import full
 
 from ...fluid.data_feeder import (
@@ -25,11 +26,7 @@ from ...fluid.data_feeder import (
     check_type,
     check_variable_and_dtype,
 )
-from ...fluid.framework import (
-    _in_legacy_dygraph,
-    _non_static_mode,
-    in_dygraph_mode,
-)
+from ...fluid.framework import in_dygraph_mode
 from ...tensor import clip, concat, sqrt, sum
 from ...tensor.creation import zeros
 
@@ -320,11 +317,11 @@ def interpolate(
         size (list|tuple|Tensor|None): Output shape of image resize
              layer, the shape is (out_w, ) when input is a 3-D Tensor, the shape is (out_h, out_w)
              when input is a 4-D Tensor and is (out_d, out_h, out_w) when input is a 5-D Tensor.
-             Default: None. If a list/tuple, each element can be an integer or a Tensor of shape: [1].
+             Default: None. If a list/tuple, each element can be an integer or a Tensor of shape: [1] or [].
              If a Tensor, its dimensions size should be a 1.
         scale_factor (float|Tensor|list|tuple|None): The multiplier for the input height or width. At
              least one of :attr:`size` or :attr:`scale_factor` must be set.
-             And :attr:`size` has a higher priority than :attr:`scale_factor`.Has to match input size if it is either a list or a tuple or a Tensor.
+             And :attr:`size` has a higher priority than :attr:`scale_factor`.Has to match input size if it is either a list or a tuple or a Tensor.If a list/tuple, each element can be an integer or a Tensor of shape: [1] or [].
              Default: None.
         mode (str): The resample method. It supports 'linear', 'area', 'nearest', 'bilinear',
                        'bicubic' and 'trilinear' currently. Default: 'nearest'
@@ -402,6 +399,21 @@ def interpolate(
     if size is None and scale_factor is None:
         raise ValueError("One of size and scale_factor must not be None.")
 
+    if isinstance(size, (tuple, list)) and (len(size) != x.ndim - 2):
+        raise ValueError(
+            'The x and size should satisfy rank(x) - 2 == len(size).'
+        )
+
+    if isinstance(size, Variable):
+        if size.ndim != 1:
+            raise ValueError(
+                f"If size is a tensor, it's rank must be 1, but received {size.ndim}."
+            )
+        if size.shape[0] != x.ndim - 2:
+            raise ValueError(
+                'The x and size should satisfy rank(x) - 2 == size.shape[0].'
+            )
+
     if not isinstance(align_corners, bool):
         raise TypeError("Attr align_corners should be a bool value")
 
@@ -413,22 +425,19 @@ def interpolate(
         )
 
     if resample == 'AREA':
-        if (
-            isinstance(size, list)
-            or isinstance(size, tuple)
-            or isinstance(size, Variable)
-        ):
+        if isinstance(size, (list, tuple, Variable)):
             if len(size) == 0:
                 raise ValueError("output size can not be empty")
+        if size is None:
+            raise ValueError("output size can not be None in AREA mode")
         if len(x.shape) == 3:
             return paddle.nn.functional.adaptive_avg_pool1d(x, size)
         elif len(x.shape) == 4:
+            print("size :", size)
             return paddle.nn.functional.adaptive_avg_pool2d(x, size)
         elif len(x.shape) == 5:
             return paddle.nn.functional.adaptive_avg_pool3d(x, size)
-
-    helper = LayerHelper('{}_interp_v2'.format(resample_type), **locals())
-    dtype = helper.input_dtype(input_param_name='x')
+    helper = LayerHelper(f'{resample_type}_interp_v2', **locals())
     if len(x.shape) == 3 and data_format not in ['NCW', 'NWC']:
         raise ValueError(
             "Got wrong value for param `data_format`: "
@@ -449,7 +458,7 @@ def interpolate(
         )
 
     def _is_list_or_turple_(data):
-        return isinstance(data, list) or isinstance(data, tuple)
+        return isinstance(data, (list, tuple))
 
     if data_format == 'NCHW' or data_format == 'NCDHW' or data_format == 'NCW':
         data_layout = 'NCHW'
@@ -481,12 +490,13 @@ def interpolate(
         else:
             if in_dynamic_mode():
                 if isinstance(out_shape, Variable):
-                    out_shape = list(out_shape.numpy())
+                    out_shape = list(out_shape.numpy(False))
                 else:
                     out_shape = list(out_shape)
+
                 for i, dim in enumerate(out_shape):
                     if isinstance(dim, Variable):
-                        out_shape[i] = dim.numpy()[0]
+                        out_shape[i] = dim.item()
             if not (_is_list_or_turple_(out_shape)):
                 raise TypeError("size should be a list or tuple or Variable.")
             # Validate the shape
@@ -512,7 +522,7 @@ def interpolate(
                         temp_out = helper.create_variable_for_type_inference(
                             'int32'
                         )
-                        fill_constant(
+                        paddle.tensor.fill_constant(
                             [1], 'int32', dim, force_cpu=True, out=temp_out
                         )
                         new_size_tensor.append(temp_out)
@@ -558,18 +568,21 @@ def interpolate(
 
     else:
         if in_dynamic_mode() and isinstance(scale, Variable):
-            scale = list(scale.numpy())
+            if scale.shape == []:
+                scale = float(scale)
+            else:
+                scale = list(scale.numpy())
         if isinstance(scale, Variable):
             scale.stop_gradient = True
             inputs["Scale"] = scale
-        elif isinstance(scale, float) or isinstance(scale, int):
+        elif isinstance(scale, (float, int, numpy.ndarray)):
             if scale <= 0:
                 raise ValueError("Attr(scale) should be greater than zero.")
             scale_list = []
             for i in range(len(x.shape) - 2):
                 scale_list.append(scale)
             attrs['scale'] = list(map(float, scale_list))
-        elif isinstance(scale, list) or isinstance(scale, tuple):
+        elif isinstance(scale, (list, tuple)):
             if len(scale) != len(x.shape) - 2:
                 raise ValueError(
                     "scale_shape length should be {} for "
@@ -682,9 +695,12 @@ def interpolate(
             else:
                 out = _legacy_C_ops.bicubic_interp_v2(x, *dy_attr)
         return out
+
+    dtype = helper.input_dtype(input_param_name='x')
+
     out = helper.create_variable_for_type_inference(dtype)
     helper.append_op(
-        type='{}_interp_v2'.format(resample_type),
+        type=f'{resample_type}_interp_v2',
         inputs=inputs,
         outputs={"Out": out},
         attrs=attrs,
@@ -843,12 +859,12 @@ def upsample(
         size (list|tuple|Tensor|None, optional): Output shape of image resize
              layer, the shape is (out_w, ) when input is a 3-D Tensor, the shape is (out_h, out_w)
              when input is a 4-D Tensor and is (out_d, out_h, out_w) when input is a 5-D Tensor.
-             Default: None. If a list/tuple, each element can be an integer or a Tensor of shape: [1].
+             Default: None. If a list/tuple, each element can be an integer or a Tensor of shape: [1] or [].
              If a Tensor , its dimensions size should be a 1.
         scale_factor (float|Tensor|list|tuple|None, optional): The multiplier for the input height or width. At
              least one of :attr:`size` or :attr:`scale_factor` must be set.
              And :attr:`size` has a higher priority than :attr:`scale_factor`.Has to match input size if
-             it is either a list or a tuple or a Tensor.
+             it is either a list or a tuple or a Tensor. If a list/tuple, each element can be an integer or a Tensor of shape: [1] or [].
              Default: None.
         mode (str, optional): The resample method. It supports 'linear', 'nearest', 'bilinear',
                        'bicubic' and 'trilinear' currently. Default: 'nearest'
@@ -927,24 +943,22 @@ def bilinear(x1, x2, weight, bias=None, name=None):
 
     if in_dygraph_mode():
         return _C_ops.bilinear_tensor_product(x1, x2, weight, bias)
-    elif _non_static_mode():
-        return _legacy_C_ops.bilinear_tensor_product(x1, x2, weight, bias)
+    else:
+        check_variable_and_dtype(x1, 'x1', ['float32', 'float64'], 'bilinear')
+        check_variable_and_dtype(x2, 'x2', ['float32', 'float64'], 'bilinear')
 
-    check_variable_and_dtype(x1, 'x1', ['float32', 'float64'], 'bilinear')
-    check_variable_and_dtype(x2, 'x2', ['float32', 'float64'], 'bilinear')
+        inputs = {"X": x1, "Y": x2, "Weight": weight}
+        if bias is not None:
+            inputs["Bias"] = bias
 
-    inputs = {"X": x1, "Y": x2, "Weight": weight}
-    if bias is not None:
-        inputs["Bias"] = bias
+        helper = LayerHelper("bilinear", **locals())
+        out = helper.create_variable_for_type_inference(dtype=x1.dtype)
 
-    helper = LayerHelper("bilinear", **locals())
-    out = helper.create_variable_for_type_inference(dtype=x1.dtype)
+        helper.append_op(
+            type="bilinear_tensor_product", inputs=inputs, outputs={"Out": out}
+        )
 
-    helper.append_op(
-        type="bilinear_tensor_product", inputs=inputs, outputs={"Out": out}
-    )
-
-    return out
+        return out
 
 
 def dropout(
@@ -957,7 +971,7 @@ def dropout(
     dropout probability.
 
     Args:
-        x (Tensor): The input tensor. The data type is float32 or float64.
+        x (Tensor): The input tensor. The data type is float16, float32 or float64.
         p (float|int, optional): Probability of setting units to zero. Default: 0.5.
         axis (int|list|tuple, optional): The axis along which the dropout is performed. Default: None.
         training (bool, optional): A flag indicating whether it is in train phrase or not. Default: True.
@@ -1118,80 +1132,67 @@ def dropout(
             'downgrade_in_infer' if mode == 'downscale_in_infer' else mode
         )  # semantic transfer
 
-        if _non_static_mode():
+        if in_dygraph_mode():
             if default_main_program().random_seed != 0:
                 seed = default_main_program().random_seed
 
-            if in_dygraph_mode():
-                out, mask = _C_ops.dropout(
-                    x,
-                    None,
-                    p,
-                    not training,
-                    mode,
-                    seed if seed is not None else 0,
-                    seed is not None,
-                )
-
-                return out
-            out, mask = _legacy_C_ops.dropout(
+            out, mask = _C_ops.dropout(
                 x,
-                'dropout_prob',
+                None,
                 p,
-                'is_test',
                 not training,
-                'fix_seed',
-                seed is not None,
-                'seed',
-                seed if seed is not None else 0,
-                'dropout_implementation',
                 mode,
+                seed if seed is not None else 0,
+                seed is not None,
+            )
+
+            return out
+        else:
+            helper = LayerHelper('dropout', **locals())
+            check_variable_and_dtype(
+                x, 'x', ['float16', 'float32', 'float64'], 'dropout'
+            )
+
+            out = helper.create_variable_for_type_inference(dtype=x.dtype)
+            mask = helper.create_variable_for_type_inference(
+                dtype=core.VarDesc.VarType.UINT8, stop_gradient=True
+            )
+
+            def get_attrs(prog, dropout_prob, is_test, seed):
+                if (seed is None or seed == 0) and prog.random_seed != 0:
+                    seed = prog.random_seed
+
+                if isinstance(
+                    dropout_prob, Variable
+                ) and not dropout_prob.shape != [1]:
+                    raise TypeError(
+                        "Required p.shape == [1] if type(p) is Variable, but received p.shape = {}".format(
+                            p.shape
+                        )
+                    )
+                attrs = {
+                    'dropout_prob': dropout_prob,
+                    'is_test': is_test,
+                    'fix_seed': seed is not None,
+                    'seed': seed if seed is not None else 0,
+                    'dropout_implementation': mode,
+                }
+                return attrs
+
+            attrs = get_attrs(helper.main_program, p, not training, seed)
+
+            helper.append_op(
+                type='dropout',
+                inputs={'X': [x]},
+                outputs={'Out': [out], 'Mask': [mask]},
+                attrs=attrs,
             )
             return out
-
-        helper = LayerHelper('dropout', **locals())
-        check_variable_and_dtype(
-            x, 'x', ['float16', 'float32', 'float64'], 'dropout'
-        )
-
-        out = helper.create_variable_for_type_inference(dtype=x.dtype)
-        mask = helper.create_variable_for_type_inference(
-            dtype=core.VarDesc.VarType.UINT8, stop_gradient=True
-        )
-
-        def get_attrs(prog, dropout_prob, is_test, seed):
-            if (seed is None or seed == 0) and prog.random_seed != 0:
-                seed = prog.random_seed
-
-            if isinstance(
-                dropout_prob, Variable
-            ) and not dropout_prob.shape != [1]:
-                raise TypeError(
-                    "Required p.shape == [1] if type(p) is Variable, but received p.shape = {}".format(
-                        p.shape
-                    )
-                )
-            attrs = {
-                'dropout_prob': dropout_prob,
-                'is_test': is_test,
-                'fix_seed': seed is not None,
-                'seed': seed if seed is not None else 0,
-                'dropout_implementation': mode,
-            }
-            return attrs
-
-        attrs = get_attrs(helper.main_program, p, not training, seed)
-
-        helper.append_op(
-            type='dropout',
-            inputs={'X': [x]},
-            outputs={'Out': [out], 'Mask': [mask]},
-            attrs=attrs,
-        )
-        return out
     else:  # sometimes called dropout_nd #TODO: optimize with c++
         if not in_dynamic_mode():
-            check_variable_and_dtype(x, 'x', ['float32', 'float64'], 'dropout')
+            check_variable_and_dtype(
+                x, 'x', ['float16', 'float32', 'float64'], 'dropout'
+            )
         dtype = x.dtype
         keep_prob = 1 - p
         if training:
@@ -1259,7 +1260,7 @@ def dropout2d(x, p=0.5, training=True, data_format='NCHW', name=None):
 
     Args:
         x (Tensor):  The input is 4-D Tensor with shape [N, C, H, W] or [N, H, W, C].
-                     The data type is float32 or float64.
+                     The data type is float16, float32 or float64.
         p (float, optional): Probability of setting units to zero. Default: 0.5.
         training (bool, optional): A flag indicating whether it is in train phrase or not. Default: True.
         data_format (str, optional): Specify the data format of the input, and the data format of the output will be consistent with that of the input. An optional string from `NCHW` or `NHWC` . When it is `NCHW` , the data is stored in the order of: [batch_size, input_channels, input_height, input_width]. Default: `NCHW` .
@@ -1374,7 +1375,7 @@ def alpha_dropout(x, p=0.5, training=True, name=None):
     Alpha Dropout fits well to SELU activate function by randomly setting activations to the negative saturation value.
 
     Args:
-        x (Tensor): The input tensor. The data type is float32 or float64.
+        x (Tensor): The input tensor. The data type is float16, float32 or float64.
         p (float | int): Probability of setting units to zero. Default 0.5.
         training (bool): A flag indicating whether it is in train phrase or not. Default True.
         name (str, optional): Name for the operation (optional, default is None). For more information, please refer to :ref:`api_guide_Name`.
@@ -1406,7 +1407,7 @@ def alpha_dropout(x, p=0.5, training=True, name=None):
 
     if not in_dynamic_mode():
         check_variable_and_dtype(
-            x, 'x', ['float32', 'float64'], 'alpha_dropout'
+            x, 'x', ['float16', 'float32', 'float64'], 'alpha_dropout'
         )
 
     if training:
@@ -1426,7 +1427,7 @@ def alpha_dropout(x, p=0.5, training=True, name=None):
         random_tensor = paddle.uniform(
             input_shape, dtype='float32', min=0.0, max=1.0
         )
-        p = full(shape=[1], fill_value=p, dtype='float32')
+        p = full(shape=input_shape, fill_value=p, dtype='float32')
         keep_mask = paddle.greater_equal(random_tensor, p)
         keep_mask = paddle.cast(keep_mask, dtype)
         drop_mask = paddle.subtract(
@@ -1434,7 +1435,7 @@ def alpha_dropout(x, p=0.5, training=True, name=None):
         )
 
         # apply mask
-        b = full(shape=[1], fill_value=b, dtype=dtype)
+        b = full(shape=input_shape, fill_value=b, dtype=dtype)
         y = paddle.add(
             paddle.multiply(x, keep_mask),
             paddle.scale(drop_mask, scale=alpha_p),
@@ -1597,6 +1598,7 @@ def pad(x, pad, mode='constant', value=0.0, data_format="NCHW", name=None):
                 'int64',
                 'complex64',
                 'complex128',
+                'uint16',
             ],
             "pad",
         )
@@ -1620,7 +1622,7 @@ def pad(x, pad, mode='constant', value=0.0, data_format="NCHW", name=None):
         3,
         4,
         5,
-    ], "input tesor dimension must be in [3, 4, 5] but got {}".format(x_dim)
+    ], f"input tesor dimension must be in [3, 4, 5] but got {x_dim}"
 
     supported_format_map = {
         3: ["NCL", "NLC"],
@@ -1681,41 +1683,24 @@ def pad(x, pad, mode='constant', value=0.0, data_format="NCHW", name=None):
 
     if in_dygraph_mode():
         if isinstance(pad, Variable):
-            pad = pad.numpy().tolist()
+            pad = pad.tolist()
         out = _C_ops.pad3d(x, pad, mode, value, data_format)
     else:
-        if _in_legacy_dygraph():
-            if isinstance(pad, Variable):
-                pad = pad.numpy().tolist()
-            out = _legacy_C_ops.pad3d(
-                x,
-                "paddings",
-                pad,
-                "mode",
-                mode,
-                "value",
-                value,
-                "data_format",
-                data_format,
-                "name",
-                name,
-            )
+        attrs = {'mode': mode, 'value': value, 'data_format': data_format}
+        inputs = {'X': [x]}
+        if isinstance(pad, Variable):
+            inputs['Paddings'] = [pad]
+            attrs['paddings'] = []
         else:
-            attrs = {'mode': mode, 'value': value, 'data_format': data_format}
-            inputs = {'X': [x]}
-            if isinstance(pad, Variable):
-                inputs['Paddings'] = [pad]
-                attrs['paddings'] = []
-            else:
-                attrs['paddings'] = pad
+            attrs['paddings'] = pad
 
-            helper = LayerHelper('pad3d', **locals())
+        helper = LayerHelper('pad3d', **locals())
 
-            dtype = helper.input_dtype(input_param_name='input')
-            out = helper.create_variable_for_type_inference(dtype)
-            helper.append_op(
-                type='pad3d', inputs=inputs, outputs={"Out": out}, attrs=attrs
-            )
+        dtype = helper.input_dtype(input_param_name='input')
+        out = helper.create_variable_for_type_inference(dtype)
+        helper.append_op(
+            type='pad3d', inputs=inputs, outputs={"Out": out}, attrs=attrs
+        )
 
     if len(unsqueezed_dim) != 0:
         out = squeeze(out, axis=unsqueezed_dim)
@@ -1735,7 +1720,7 @@ def zeropad2d(x, padding, data_format="NCHW", name=None):
         data_format(str, optional): An string from: "NHWC", "NCHW". Specify the data format of
             the input data. Default: "NCHW".
         name(str, optional): The default value is None. Normally there is no need for user
-            to set this property.
+            to set this property. For more information, please refer to :ref:`api_guide_Name`.
 
     Returns:
         Tensor, padded with 0 according to pad and data type is same as input.
@@ -1744,12 +1729,11 @@ def zeropad2d(x, padding, data_format="NCHW", name=None):
         .. code-block:: python
 
             import paddle
-            import numpy as np
             import paddle.nn.functional as F
-
-            x_shape = (1, 1, 2, 3)
-            x = paddle.arange(np.prod(x_shape), dtype="float32").reshape(x_shape) + 1
+            x_shape = paddle.to_tensor([1, 1, 2, 3])
+            x = paddle.arange(paddle.prod(x_shape), dtype="float32").reshape(x_shape) + 1
             y = F.zeropad2d(x, [1, 2, 1, 1])
+            print(y)
             # [[[[0. 0. 0. 0. 0. 0.]
             #    [0. 1. 2. 3. 0. 0.]
             #    [0. 4. 5. 6. 0. 0.]
@@ -1873,46 +1857,34 @@ def linear(x, weight, bias=None, name=None):
         # TODO(jiabin): using addmm for fast forward route
         return _C_ops.linear(x, weight, bias)
     else:
-        if _in_legacy_dygraph():
-            pre_bias = _legacy_C_ops.matmul_v2(
-                x, weight, 'trans_x', False, 'trans_y', False
-            )
+        helper = LayerHelper('linear', **locals())
+        dtype = x.dtype
 
-            if bias is None:
-                return pre_bias
+        check_variable_and_dtype(
+            x, 'x', ['float16', 'float32', 'float64'], 'linear'
+        )
+        check_dtype(dtype, 'dtype', ['float16', 'float32', 'float64'], 'linear')
 
-            return _legacy_C_ops.elementwise_add(pre_bias, bias)
-        else:
-            helper = LayerHelper('linear', **locals())
-            dtype = x.dtype
-
-            check_variable_and_dtype(
-                x, 'x', ['float16', 'float32', 'float64'], 'linear'
-            )
-            check_dtype(
-                dtype, 'dtype', ['float16', 'float32', 'float64'], 'linear'
-            )
-
-            inputs = {'X': [x], 'Y': [weight]}
-            attrs = {'trans_x': False, 'trans_y': False}
-            tmp = helper.create_variable_for_type_inference(dtype)
+        inputs = {'X': [x], 'Y': [weight]}
+        attrs = {'trans_x': False, 'trans_y': False}
+        tmp = helper.create_variable_for_type_inference(dtype)
+        helper.append_op(
+            type='matmul_v2',
+            inputs=inputs,
+            outputs={'Out': tmp},
+            attrs=attrs,
+        )
+        if bias is not None:
+            res = helper.create_variable_for_type_inference(dtype)
             helper.append_op(
-                type='matmul_v2',
-                inputs=inputs,
-                outputs={'Out': tmp},
-                attrs=attrs,
+                type='elementwise_add',
+                inputs={'X': [tmp], 'Y': [bias]},
+                outputs={'Out': [res]},
+                attrs={'axis': -1},
             )
-            if bias is not None:
-                res = helper.create_variable_for_type_inference(dtype)
-                helper.append_op(
-                    type='elementwise_add',
-                    inputs={'X': [tmp], 'Y': [bias]},
-                    outputs={'Out': [res]},
-                    attrs={'axis': len(x.shape) - 1},
-                )
-            else:
-                res = tmp
-            return res
+        else:
+            res = tmp
+        return res
 
 
 def label_smooth(label, prior_dist=None, epsilon=0.1, name=None):
@@ -1941,7 +1913,7 @@ def label_smooth(label, prior_dist=None, epsilon=0.1, name=None):
         label(Tensor): The input variable containing the label data. The
                         label data should use one-hot representation. It's
                         a multidimensional tensor with a shape of
-                        :math:`[N_1, ..., Depth]`, where Depth is class number. The dtype can be "float32" and "float64".
+                        :math:`[N_1, ..., Depth]`, where Depth is class number. The dtype can be "float16" "float32" and "float64".
         prior_dist(Tensor, optional): The prior distribution to be used to smooth
                         labels. If not provided, an uniform distribution
                         is used. It's a multidimensional tensor with a shape of
@@ -1983,7 +1955,10 @@ def label_smooth(label, prior_dist=None, epsilon=0.1, name=None):
         )
 
     check_variable_and_dtype(
-        label, 'label', ['float32', 'float64'], 'label_smooth'
+        label,
+        'label',
+        ['uint16', 'float16', 'float32', 'float64'],
+        'label_smooth',
     )
 
     helper = LayerHelper("label_smooth", **locals())
@@ -2014,7 +1989,7 @@ def class_center_sample(label, num_classes, num_samples, group=None):
     For more information, Partial FC: Training 10 Million Identities on a Single Machine
     arxiv: https://arxiv.org/abs/2010.05222
 
-    .. hint::
+    Note:
         If the number of the positive class centers is greater than the input num_samples, it keeps all the positive
         class centers and the shape of sampled_class_center will be [num_positive_class_centers].
 
@@ -2294,7 +2269,7 @@ def fold(
     assert len(x.shape) == 3, "input should be the format of [N, C, L]"
 
     def _is_list_or_turple_(data):
-        return isinstance(data, list) or isinstance(data, tuple)
+        return isinstance(data, (list, tuple))
 
     if isinstance(output_sizes, int):
         output_sizes = [output_sizes, output_sizes]

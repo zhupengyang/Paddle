@@ -18,9 +18,8 @@ import unittest
 import numpy as np
 
 import paddle
-import paddle.fluid as fluid
-import paddle.fluid.core as core
-import paddle.fluid.generator as generator
+from paddle import fluid
+from paddle.fluid import core
 from paddle.tensor import random
 
 
@@ -193,8 +192,6 @@ class TestGeneratorSeed(unittest.TestCase):
 
     def test_generator_randint_dygraph(self):
         """Test Generator seed."""
-        gen = generator.Generator()
-
         fluid.enable_dygraph()
 
         gen = paddle.seed(12312321111)
@@ -375,18 +372,18 @@ class TestGeneratorSeed(unittest.TestCase):
             # example 1:
             # attr shape is a list which doesn't contain tensor Variable.
             x = paddle.uniform(shape=[2, 10])
-            result_1 = fluid.layers.fc(
-                input=x,
+            result_1 = paddle.static.nn.fc(
+                x,
                 size=10,
-                param_attr=fluid.initializer.TruncatedNormal(
-                    loc=0.0, scale=2.0
+                weight_attr=paddle.nn.initializer.TruncatedNormal(
+                    mean=0.0, std=2.0
                 ),
             )
-            result_2 = fluid.layers.fc(
-                input=x,
+            result_2 = paddle.static.nn.fc(
+                x,
                 size=10,
-                param_attr=fluid.initializer.TruncatedNormal(
-                    loc=0.0, scale=2.0
+                weight_attr=paddle.nn.initializer.TruncatedNormal(
+                    mean=0.0, std=2.0
                 ),
             )
 

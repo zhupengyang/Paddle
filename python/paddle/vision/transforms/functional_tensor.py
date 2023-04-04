@@ -457,7 +457,7 @@ def rotate(
         nh = npos[0][1]
 
         if paddle.in_dynamic_mode():
-            ow, oh = int(nw.numpy()[0]), int(nh.numpy()[0])
+            ow, oh = int(nw), int(nh)
         else:
             ow, oh = nw.astype("int32"), nh.astype("int32")
 
@@ -703,7 +703,7 @@ def pad(img, padding, fill=0, padding_mode='constant', data_format='CHW'):
     if isinstance(padding, (list, tuple)) and len(padding) not in [2, 4]:
         raise ValueError(
             "Padding must be an int or a 2, or 4 element tuple, not a "
-            + "{} element tuple".format(len(padding))
+            + f"{len(padding)} element tuple"
         )
 
     assert padding_mode in [
@@ -772,11 +772,11 @@ def resize(img, size, interpolation='bilinear', data_format='CHW'):
         isinstance(size, int)
         or (isinstance(size, (tuple, list)) and len(size) == 2)
     ):
-        raise TypeError('Got inappropriate size arg: {}'.format(size))
+        raise TypeError(f'Got inappropriate size arg: {size}')
 
     if isinstance(size, int):
         w, h = _get_image_size(img, data_format)
-        # TODO(Aurelius84): In static mode, w and h will be -1 for dynamic shape.
+        # TODO(Aurelius84): In static graph mode, w and h will be -1 for dynamic shape.
         # We should consider to support this case in future.
         if w <= 0 or h <= 0:
             raise NotImplementedError(

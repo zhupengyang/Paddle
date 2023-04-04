@@ -20,10 +20,8 @@ import unittest
 from test_cluster import cluster_json
 
 import paddle
-import paddle.nn as nn
 import paddle.nn.functional as F
-import paddle.static as static
-import paddle.utils as utils
+from paddle import nn, static, utils
 from paddle.distributed import fleet
 from paddle.distributed.auto_parallel.cluster import Cluster
 from paddle.distributed.auto_parallel.completion import Completer
@@ -180,7 +178,7 @@ class TestBaseCost(unittest.TestCase):
         for op in train_program.global_block().ops:
             dist_op = dist_context.get_dist_op_for_program(op)
             if dist_op:
-                processes = dist_op.dist_attr.process_mesh.processes
+                processes = dist_op.dist_attr.process_mesh.process_ids
                 comp_descs = build_comp_desc_from_dist_op(dist_op, dist_context)
                 self.assertTrue(isinstance(comp_descs, dict) and comp_descs)
                 var_names = None

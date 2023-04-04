@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import builtins
 import collections
 import copy
 import functools
@@ -20,14 +19,11 @@ import inspect
 import logging
 import pdb
 import re
-import types
+from typing import Any, List
 
 import numpy
 
-from paddle.fluid.dygraph.container import Sequential
-from paddle.fluid.dygraph.layers import Layer
-from paddle.jit.dy2static.logging_utils import TranslatorLogger
-from paddle.jit.dy2static.utils import is_paddle_func, unwrap
+from paddle.nn import Layer
 
 from .convert_operators import (
     convert_enumerate,
@@ -36,17 +32,19 @@ from .convert_operators import (
     convert_range,
     convert_zip,
 )
+from .logging_utils import TranslatorLogger
+from .program_translator import (
+    CONVERSION_OPTIONS,
+    StaticFunction,
+    convert_to_static,
+    unwrap_decorators,
+)
+from .utils import is_builtin, is_paddle_func, unwrap
 
 __all__ = []
 
 
-# The api(s) should be considered as plain function and convert
-# them into static layer code.
-PADDLE_NEED_CONVERT_APIS = [Sequential]
-
 translator_logger = TranslatorLogger()
-
-CONVERSION_OPTIONS = "An attribute for a function that indicates conversion flags of the function in dynamic-to-static."
 
 
 class ConversionOptions:
@@ -62,21 +60,18 @@ class ConversionOptions:
     def __init__(self, not_convert=False):
         self.not_convert = not_convert
 
+    def attach(self, func):
+        if inspect.ismethod(func):
+            func = func.__func__
 
-def is_builtin(func, name=None):
-    """predict whether a function is a builtin function with name={name}.
-    if name == None, then any builtin function will return True
-    """
-
-    def name_judge():
-        return name is None or func.__name__ == name
-
-    if isinstance(func, types.BuiltinFunctionType) and name_judge():
-        return True
-    elif func in builtins.__dict__.values() and name_judge():
-        return True
-    else:
-        return False
+        if inspect.isfunction(func):
+            setattr(func, CONVERSION_OPTIONS, self)
+        else:
+            translator_logger.warn(
+                "Only support @not_to_static to type(function) or type(method), but recevied {}".format(
+                    type(func)
+                )
+            )
 
 
 def builtin_modules():
@@ -105,6 +100,16 @@ def builtin_modules():
 BUILTIN_LIKELY_MODULES = builtin_modules()
 
 
+def add_ignore_module(modules: List[Any]):
+    """
+    Adds modules that ignore transcription
+    """
+    global BUILTIN_LIKELY_MODULES
+    for module in modules:
+        if module not in BUILTIN_LIKELY_MODULES:
+            BUILTIN_LIKELY_MODULES.append(module)
+
+
 def is_unsupported(func):
     """
     Checks whether the func is supported by dygraph to static graph.
@@ -125,6 +130,11 @@ def is_unsupported(func):
                 return True
 
     # NOTE: should be placed before `is_paddle_func`
+    # The api(s) should be considered as plain function and convert
+    # them into static layer code.
+    from paddle.nn import Sequential
+
+    PADDLE_NEED_CONVERT_APIS = [Sequential]
     if type(func) in PADDLE_NEED_CONVERT_APIS:
         return False
 
@@ -174,16 +184,7 @@ def convert_call(func):
             #  [1. 1. 1.]]
 
     """
-    # NOTE(Aurelius84): Fix it after all files migrating into jit.
-    from paddle.jit.dy2static.program_translator import (
-        StaticFunction,
-        convert_to_static,
-        unwrap_decorators,
-    )
-
-    translator_logger.log(
-        1, "Convert callable object: convert {}.".format(func)
-    )
+    translator_logger.log(1, f"Convert callable object: convert {func}.")
     func_self = None
     converted_call = None
 
@@ -287,7 +288,7 @@ def convert_call(func):
             # If func is not in __globals__, it does not need to be transformed
             # because it has been transformed before.
             converted_call = None
-        except (IOError, OSError):
+        except OSError:
             # NOTE:
             # If func has been decorated, its source code can not be get
             # so that it can not be transformed to static function.
@@ -296,11 +297,11 @@ def convert_call(func):
         try:
             converted_call = convert_to_static(func)
             func_self = getattr(func, '__self__', None)
-        except (IOError, OSError):
+        except OSError:
             # NOTE: func may have been decorated.
             converted_call = None
 
-    elif hasattr(func, '__class__') and hasattr(func.__class__, '__call__'):
+    elif hasattr(func, '__class__') and callable(func.__class__):
         if hasattr(func, 'forward') and isinstance(func, Layer):
             try:
                 _, forward_func = unwrap_decorators(func.forward)
@@ -309,8 +310,8 @@ def convert_call(func):
                 # Bound mothod will be convert into plain function after `convert_to_static`.
                 # So descriptor mechanism is used to bound `self` instance on function to
                 # keep it as bound method.
-                setattr(func, 'forward', forward_func.__get__(func))
-            except (IOError, OSError, TypeError):
+                func.forward = forward_func.__get__(func)
+            except (OSError, TypeError):
                 # NOTE: func.forward may have been decorated.
                 func_self = None if func_self else func_self
             converted_call = func
@@ -319,14 +320,14 @@ def convert_call(func):
                 call_func = func.__class__.__call__
                 converted_call = convert_to_static(call_func)
                 func_self = func
-            except (IOError, OSError, TypeError):
+            except (OSError, TypeError):
                 # NOTE:
                 # If `func` is a class which is being initialized, for example `convert_call(Foo)()`,
                 # it doesn't need to be transformed
                 func_self = None if func_self else func_self
     else:
         raise NotImplementedError(
-            "Callable {} can not be transformed at present.".format(func)
+            f"Callable {func} can not be transformed at present."
         )
 
     if converted_call is None:
