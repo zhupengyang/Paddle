@@ -902,8 +902,7 @@ def fused_multi_transformer(
     mode='upscale_in_train',
     trans_qkvw=True,
     ring_id=-1,
-    name=None,
-    quant_weight=False
+    name=None
 ):
     r"""
     This is a fusion operator to compute multi transformer layers in transformer model architecture.
@@ -1072,10 +1071,6 @@ def fused_multi_transformer(
             ffn1_biases,
             ffn2_weights,
             ffn2_biases,
-            qkv_weights_scales,
-            linear_weights_scales,
-            ffn1_weights_scales,
-            ffn2_weights_scales,
             'pre_layer_norm',
             pre_layer_norm,
             'epsilon',
@@ -1094,8 +1089,6 @@ def fused_multi_transformer(
             trans_qkvw,
             'ring_id',
             ring_id,
-            'quant_weight',
-            quant_weight,
         )
         if cache_kvs is not None:
             return final_out, cache_kv_out
@@ -1117,11 +1110,6 @@ def fused_multi_transformer(
         inputs['LnScale'] = ln_scales
         inputs['LnBias'] = ln_biases
         inputs['QKVW'] = qkv_weights
-        if quant_weight:
-            inputs['QKVWScale'] = qkv_weights_scales
-            inputs['OutLinearWScale'] = linear_weights_scales
-            inputs['FFN1WeightScale'] = ffn1_weights_scales
-            inputs['FFN2WeightScale'] = ffn2_weights_scales
 
         if qkv_biases is not None:
             inputs['QKVBias'] = qkv_biases
@@ -1160,7 +1148,6 @@ def fused_multi_transformer(
             'act_method': activation,
             'trans_qkvw': trans_qkvw,
             'ring_id': ring_id,
-            'quant_weight':quant_weight,
         }
 
         outputs = {}

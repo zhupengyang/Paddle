@@ -1207,8 +1207,7 @@ class FusedMultiTransformer(Layer):
         nranks=1,
         trans_qkvw=True,
         ring_id=-1,
-        name=None,
-        quant_weight=False
+        name=None
     ):
         super().__init__()
 
@@ -1232,7 +1231,6 @@ class FusedMultiTransformer(Layer):
         self._epsilon = epsilon
         self._trans_qkvw = trans_qkvw
         self._ring_id = ring_id
-        self._quant_weight=quant_weight
 
         self.embed_dim = embed_dim
         self.num_heads = num_heads
@@ -1301,42 +1299,26 @@ class FusedMultiTransformer(Layer):
             ln_bias = self.create_parameter(
                 attr=ln_bias_attr, shape=[embed_dim], is_bias=True
             )
-            if not self._quant_weight:
-                qkv_weight = self.create_parameter(
-                    shape=[3, num_heads, self.head_dim, embed_dim]
-                    if trans_qkvw
-                    else [embed_dim, 3, num_heads, self.head_dim],
-                    attr=qkv_weight_attr,
-                    dtype=self._dtype,
-                    is_bias=False,
-                )
-            else:
-                qkv_weight = self.create_parameter(
-                    [embed_dim, 3, num_heads, self.head_dim],
-                    attr=qkv_weight_attr,
-                    dtype='int8',
-                    is_bias=False,
-                )
+            qkv_weight = self.create_parameter(
+                shape=[3, num_heads, self.head_dim, embed_dim]
+                if trans_qkvw
+                else [embed_dim, 3, num_heads, self.head_dim],
+                attr=qkv_weight_attr,
+                dtype=self._dtype,
+                is_bias=False,
+            )
             qkv_bias = self.create_parameter(
                 shape=[3, num_heads, self.head_dim],
                 attr=qkv_bias_attr,
                 dtype=self._dtype,
                 is_bias=True,
             )
-            if not self._quant_weight:
-                linear_weight = self.create_parameter(
-                    shape=[num_heads * self.head_dim, embed_dim],
-                    attr=linear_weight_attr,
-                    dtype=self._dtype,
-                    is_bias=False,
-                )
-            else:
-                linear_weight = self.create_parameter(
-                    shape=[num_heads * self.head_dim, embed_dim],
-                    attr=linear_weight_attr,
-                    dtype='int8',
-                    is_bias=False,
-                )
+            linear_weight = self.create_parameter(
+                shape=[num_heads * self.head_dim, embed_dim],
+                attr=linear_weight_attr,
+                dtype=self._dtype,
+                is_bias=False,
+            )
 
             linear_bias = self.create_parameter(
                 shape=[embed_dim],
@@ -1354,47 +1336,30 @@ class FusedMultiTransformer(Layer):
             ffn_ln_bias = self.create_parameter(
                 shape=[embed_dim], attr=ffn_ln_bias_attr, is_bias=True
             )
-            if not self._quant_weight:
-                ffn1_weight = self.create_parameter(
-                    shape=[embed_dim, dim_feedforward],
-                    attr=ffn1_weight_attr,
-                    dtype=self._dtype,
-                    is_bias=False,
-                )
-            else:
-                ffn1_weight = self.create_parameter(
-                    shape=[embed_dim, dim_feedforward],
-                    attr=ffn1_weight_attr,
-                    dtype='int8',
-                    is_bias=False,
-                )
+            ffn1_weight = self.create_parameter(
+                shape=[embed_dim, dim_feedforward],
+                attr=ffn1_weight_attr,
+                dtype=self._dtype,
+                is_bias=False,
+            )
             ffn1_bias = self.create_parameter(
                 shape=[dim_feedforward],
                 attr=ffn1_bias_attr,
                 dtype=self._dtype,
                 is_bias=True,
             )
-            if not self._quant_weight:
-                ffn2_weight = self.create_parameter(
-                    shape=[dim_feedforward, embed_dim],
-                    attr=ffn2_weight_attr,
-                    dtype=self._dtype,
-                    is_bias=False,
-                )
-            else:
-                ffn2_weight = self.create_parameter(
-                    shape=[dim_feedforward, embed_dim],
-                    attr=ffn2_weight_attr,
-                    dtype='int8',
-                    is_bias=False,
-                )
+            ffn2_weight = self.create_parameter(
+                shape=[dim_feedforward, embed_dim],
+                attr=ffn2_weight_attr,
+                dtype=self._dtype,
+                is_bias=False,
+            )
             ffn2_bias = self.create_parameter(
                 shape=[embed_dim],
                 attr=ffn2_bias_attr,
                 dtype=self._dtype,
                 is_bias=True,
             )
-            # if self._quant_weight:
             qkv_weight_scale = self.create_parameter(
                 [3, num_heads, self.head_dim],
                 attr=qkv_weight_scale_attr,
@@ -1430,12 +1395,6 @@ class FusedMultiTransformer(Layer):
                 # row parallel
                 _set_var_distributed(linear_weight)
                 _set_var_distributed(ffn2_weight)
-                # scale
-                # if self._quant_weight:
-                _set_var_distributed(qkv_weight_scale)
-                _set_var_distributed(ffn1_weight_scale)
-                _set_var_distributed(linear_weight_scale)
-                _set_var_distributed(ffn2_weight_scale)
 
             self.ln_scales.append(ln_scale)
             self.ln_biases.append(ln_bias)
@@ -1450,11 +1409,6 @@ class FusedMultiTransformer(Layer):
             self.ffn1_biases.append(ffn1_bias)
             self.ffn2_weights.append(ffn2_weight)
             self.ffn2_biases.append(ffn2_bias)
-            # if self._quant_weight:
-            self.qkv_weights_scales.append(qkv_weight_scale)
-            self.linear_weights_scales.append(linear_weight_scale)
-            self.ffn1_weights_scales.append(ffn1_weight_scale)
-            self.ffn2_weights_scales.append(ffn2_weight_scale)
         self.dropout_rate = dropout_rate
         self.activation = activation
         self.name = name
@@ -1522,10 +1476,6 @@ class FusedMultiTransformer(Layer):
             self.ffn1_biases,
             self.ffn2_weights,
             self.ffn2_biases,
-            self.qkv_weights_scales,
-            self.linear_weights_scales,
-            self.ffn1_weights_scales,
-            self.ffn2_weights_scales,
             pre_layer_norm=self.normalize_before,
             epsilon=self._epsilon,
             cache_kvs=caches,
@@ -1541,7 +1491,6 @@ class FusedMultiTransformer(Layer):
             mode='upscale_in_train',
             trans_qkvw=self._trans_qkvw,
             ring_id=self._ring_id,
-            name=self.name,
-            quant_weight=self._quant_weight
+            name=self.name
         )
         return out
