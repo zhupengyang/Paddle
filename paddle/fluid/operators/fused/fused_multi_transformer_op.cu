@@ -1221,7 +1221,6 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
 
       if (time_step) {  // generation decoder stage
         // [2, batch_size, num_head, max_seq_len, head_size]
-        VLOG(0) << "begin fmha!";
         int max_seq_len = cache_kv->dims()[3];
         fmha<T>(dev_ctx,
                 qkv_out,

@@ -1198,10 +1198,6 @@ class FusedMultiTransformer(Layer):
         ffn1_bias_attrs=None,
         ffn2_weight_attrs=None,
         ffn2_bias_attrs=None,
-        qkv_weight_scale_attrs=None,
-        linear_weight_scale_attrs=None,
-        ffn1_weight_scale_attrs=None,
-        ffn2_weight_scale_attrs=None,
         epsilon=1e-5,
         num_layers=-1,
         nranks=1,
@@ -1285,12 +1281,6 @@ class FusedMultiTransformer(Layer):
             ffn2_weight_attr = get_attr(ffn2_weight_attrs, i)
             ffn2_bias_attr = get_attr(ffn2_bias_attrs, i)
 
-            qkv_weight_scale_attr = get_attr(qkv_weight_scale_attrs, i)
-            linear_weight_scale_attr = get_attr(linear_weight_scale_attrs, i)
-            ffn1_weight_scale_attr = get_attr(ffn1_weight_scale_attrs, i)
-            ffn2_weight_scale_attr = get_attr(ffn2_weight_scale_attrs, i)
-
-
             ln_scale = self.create_parameter(
                 attr=ln_scale_attr,
                 shape=[embed_dim],
@@ -1359,30 +1349,6 @@ class FusedMultiTransformer(Layer):
                 attr=ffn2_bias_attr,
                 dtype=self._dtype,
                 is_bias=True,
-            )
-            qkv_weight_scale = self.create_parameter(
-                [3, num_heads, self.head_dim],
-                attr=qkv_weight_scale_attr,
-                dtype=self._dtype,
-                is_bias=False,
-            )
-            linear_weight_scale = self.create_parameter(
-                shape=[embed_dim],
-                attr=linear_weight_scale_attr,
-                dtype=self._dtype,
-                is_bias=False,
-            )
-            ffn1_weight_scale = self.create_parameter(
-                shape=[dim_feedforward],
-                attr=ffn1_weight_scale_attr,
-                dtype=self._dtype,
-                is_bias=False,
-            )
-            ffn2_weight_scale = self.create_parameter(
-                shape=[embed_dim],
-                attr=ffn2_weight_scale_attr,
-                dtype=self._dtype,
-                is_bias=False,
             )
             # tensor model parallel
             if nranks > 1:

@@ -42,7 +42,7 @@ void print_tensor(const T *t, int size, const char *name){
 }
 
 // for debug
-#define _DEBUG_FUSED_MULTI_TRANSFORMER
+// #define _DEBUG_FUSED_MULTI_TRANSFORMER
 
 template <typename T>
 static void AllReduce(phi::DenseTensor &tensor,  // NOLINT
