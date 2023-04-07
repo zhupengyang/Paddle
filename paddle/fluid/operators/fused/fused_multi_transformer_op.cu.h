@@ -89,13 +89,6 @@ namespace {  // NOLINT
 #define MMHA_USE_FP32_ACUM_FOR_FMA
 // #define MMHA_USE_HMMA_FOR_REDUCTION
 
-
-template <>
-class PDDataTypeTraits<bfloat16> {
- public:
-  typedef __nv_bfloat16 DataType;
-};
-
 template <typename T>
 struct Masked_multihead_attention_params {
   // output buffer, [B, 1(seq_len), num_head * dim_head]

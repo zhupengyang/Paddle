@@ -24,7 +24,7 @@
 #include "paddle/fluid/operators/fused/attn_gemm.h"
 #include "paddle/fluid/operators/fused/fmha_ref.h"
 #include "paddle/fluid/operators/fused/fused_dropout_helper.h"
-#include "paddle/fluid/operators/fused/fused_gemm_epilogue_op.h"
+#include "paddle/phi/kernels/funcs/fused_gemm_epilogue.h"
 #include "paddle/fluid/platform/device/gpu/gpu_dnn.h"
 #include "paddle/fluid/platform/dynload/cublasLt.h"
 
@@ -32,6 +32,8 @@
 #include "paddle/phi/backends/gpu/gpu_device_function.h"
 #include "paddle/phi/common/bfloat16.h"
 #include "paddle/phi/kernels/funcs/math_function.h"
+
+#include "paddle/fluid/operators/fused/datatype_traits.h"
 
 #if defined(PADDLE_WITH_NCCL) || defined(PADDLE_WITH_RCCL)
 #include "paddle/fluid/distributed/collective/process_group.h"
