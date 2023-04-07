@@ -243,6 +243,9 @@ if(WITH_XPU)
   pass_library(stack_fuse_pass inference DIR xpu DEPS ${XPU_PASS_DEPS})
   pass_library(delete_cast_op_pass inference DIR xpu DEPS ${XPU_PASS_DEPS})
   pass_library(quant_xpu_pass inference DIR xpu DEPS ${XPU_PASS_DEPS})
+  pass_library(reset_out_dtype_pass inference DIR xpu DEPS ${XPU_PASS_DEPS})
+  pass_library(convert_quant_xpu_ops_pass inference DIR xpu DEPS
+               ${XPU_PASS_DEPS})
 endif()
 
 cc_library(

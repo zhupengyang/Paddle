@@ -18,6 +18,7 @@ limitations under the License. */
 #include "paddle/phi/common/scalar.h"
 #include "paddle/phi/core/infermeta_utils.h"
 #include "paddle/phi/core/meta_tensor.h"
+#include "paddle/phi/infermeta/unary.h"
 #include "paddle/phi/kernels/cpu/conv_util.h"
 
 namespace phi {
@@ -359,6 +360,37 @@ void FusedMultiTransformerXpuInferMeta(
   out->set_dims(x_dim);
   out->set_dtype(x.dtype());
   out->set_layout(x.layout());
+}
+
+void Pool2DXPUInferMeta(const MetaTensor& x,
+                        const MetaTensor& x_max,
+                        const IntArray& kernel_size,
+                        const std::vector<int>& strides,
+                        const std::vector<int>& paddings,
+                        bool ceil_mode,
+                        bool exclusive,
+                        const std::string& data_format,
+                        const std::string& pooling_type,
+                        bool global_pooling,
+                        bool adaptive,
+                        const std::string& padding_algorithm,
+                        MetaTensor* out,
+                        MetaTensor* out_max,
+                        MetaConfig config) {
+  Pool2DInferMeta(x,
+                  kernel_size,
+                  strides,
+                  paddings,
+                  ceil_mode,
+                  exclusive,
+                  data_format,
+                  pooling_type,
+                  global_pooling,
+                  adaptive,
+                  padding_algorithm,
+                  out,
+                  config);
+  out_max->set_dtype(DataType::FLOAT32);
 }
 
 }  // namespace phi

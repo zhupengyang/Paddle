@@ -123,4 +123,20 @@ void FusedMultiTransformerXpuInferMeta(
     int ring_id,
     MetaTensor* out,
     std::vector<MetaTensor*> cache_kv_out);
+
+void Pool2DXPUInferMeta(const MetaTensor& x,
+                        const MetaTensor& x_max,
+                        const IntArray& kernel_size,
+                        const std::vector<int>& strides,
+                        const std::vector<int>& paddings,
+                        bool ceil_mode,
+                        bool exclusive,
+                        const std::string& data_format,
+                        const std::string& pooling_type,
+                        bool global_pooling,
+                        bool adaptive,
+                        const std::string& padding_algorithm,
+                        MetaTensor* out,
+                        MetaTensor* out_max,
+                        MetaConfig config = MetaConfig());
 }  // namespace phi

@@ -247,6 +247,53 @@ void PrepareBias(
   }
 }
 
+void PrepareMax(Graph* graph,
+                Scope* scope,
+                const std::string& name,
+                const std::vector<float>& max_value,
+                Node** max) {
+  auto* cpu_ctx = static_cast<phi::CPUContext*>(
+      platform::DeviceContextPool::Instance().Get(phi::CPUPlace()));
+  bool is_per_channel = max_value.size() > 1;
+  phi::DenseTensor max_t;
+  if (!is_per_channel) {
+    paddle::platform::DeviceContextPool& pool =
+        paddle::platform::DeviceContextPool::Instance();
+    const auto& dev_ctxs = pool.device_contexts();
+    auto place = phi::XPUPlace();  // xpu:0
+    for (auto it = dev_ctxs.begin(); it != dev_ctxs.end(); it++) {
+      if (it->first.GetType() == phi::AllocationType::XPU) {  // maybe xpu:1
+        place = it->first;
+      }
+    }
+    phi::XPUContext* xpu_ctx = static_cast<phi::XPUContext*>(pool.Get(place));
+    int max_ptr_size = xpu_ctx->x_context()->max_ptr_size();
+    max_t.Resize({max_ptr_size});
+    auto* max_t_data = cpu_ctx->Alloc<float>(&max_t);
+    for (int i = 0; i < max_ptr_size; i++) {
+      max_t_data[i] = max_value[0];
+    }
+  } else {
+    max_t.Resize({static_cast<int64_t>(max_value.size())});
+    memcpy(cpu_ctx->Alloc<float>(&max_t),
+           max_value.data(),
+           max_value.size() * sizeof(float));
+  }
+
+  size_t max_t_hash = HashTensor<float>(max_t);
+  std::string pre_name = GetPrefixWithoutHash(name);
+  std::string max_name = pre_name + "_max_#" + std::to_string(max_t_hash);
+  *max = FindNodeWithName(graph, max_name);
+  if (*max == nullptr) {
+    VarDesc max_desc(max_name);
+    max_desc.SetPersistable(true);
+    max_desc.SetShape(vectorize(max_t.dims()));
+    max_desc.SetDataType(proto::VarType::Type::VarType_Type_FP32);
+    *max = graph->CreateVarNode(&max_desc);
+    Assign(max_t, scope->Var(max_name)->GetMutable<phi::DenseTensor>());
+  }
+}
+
 }  // namespace ir
 }  // namespace framework
 }  // namespace paddle

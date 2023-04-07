@@ -72,6 +72,12 @@ void PrepareWeight(Graph* graph,
 void PrepareBias(
     Graph* graph, Scope* scope, BlockDesc* block, Node* src, Node** dst);
 
+void PrepareMax(Graph* graph,
+                Scope* scope,
+                const std::string& name,
+                const std::vector<float>& max_value,
+                Node** max);
+
 }  // namespace ir
 }  // namespace framework
 }  // namespace paddle

@@ -83,3 +83,12 @@
     func : multi_encoder_xpu
     data_type : x
   optional : mask, x_fp16, out_fp16
+
+- op : pool2d_xpu
+  args : (Tensor x, Tensor x_max, IntArray kernel_size, int[] strides, int[] paddings, bool ceil_mode, bool exclusive, str data_format, str pooling_type, bool global_pooling, bool adaptive, str padding_algorithm)
+  output : Tensor(out), Tensor(out_max)
+  infer_meta :
+    func : Pool2DXPUInferMeta
+  kernel :
+    func : pool2d_xpu
+    data_type : x

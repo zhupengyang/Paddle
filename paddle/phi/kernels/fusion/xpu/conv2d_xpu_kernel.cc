@@ -79,9 +79,10 @@ void Conv2dXPUKernelImpl(const Context& ctx,
       branch.get_ptr() == nullptr
           ? nullptr
           : reinterpret_cast<const XPUTypeOut*>(branch.get_ptr()->data<TOUT>());
-  auto* branch_max_data = branch_max.get_ptr() == nullptr
-                              ? nullptr
-                              : branch_max.get_ptr()->data<float>();
+  auto* branch_max_data =
+      (branch_max.get_ptr() == nullptr || branch->dtype() != DataType::INT8)
+          ? nullptr
+          : branch_max.get_ptr()->data<float>();
   const float* bias_data =
       bias.get_ptr() == nullptr ? nullptr : bias.get_ptr()->data<float>();
   auto* out_data = reinterpret_cast<XPUTypeOut*>(ctx.template Alloc<TOUT>(out));

@@ -534,7 +534,9 @@ XpuPassStrategy::XpuPassStrategy() : PassStrategy({}) {
       "fused_multi_transformer_xpu_quant_pass",
       "fc_xpu_fuse_pass",
       "conv2d_xpu_fuse_pass",
+      "convert_quant_xpu_ops_pass",
       "link_xpu_op_max_pass",
+      "reset_out_dtype_pass",
       "inplace_op_var_pass",
       "delete_isolated_node_pass",
   });
