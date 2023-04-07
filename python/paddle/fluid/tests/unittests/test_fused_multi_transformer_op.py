@@ -1470,9 +1470,6 @@ class TestFusedMultiTransformerOpPreCacheStatic1(TestFusedMultiTransformerOp):
                 rtol=self.rtol,
                 atol=self.atol,
             )
-            out = layer(x)
-
-        self.assertRaises(ValueError, test_invalid_input_dim)
 
 
 class TestFusedMultiTransformerAPIError(unittest.TestCase):
