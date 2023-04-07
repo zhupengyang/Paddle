@@ -365,18 +365,18 @@ void DispatchFMHAArchTag(Params params, const phi::GPUContext& ctx) {
 
   // LaunchMultiHeadAttentionKernel<T, cutlass::arch::Sm80, true, false, 32, 128, false, true, false>(params, ctx);
 
-  if (compute_capability == 80) {
-    DispatchFMHAIsAligned<T, cutlass::arch::Sm80>(params, ctx);
-  } else if (compute_capability == 75) {
-    DispatchFMHAIsAligned<T, cutlass::arch::Sm75>(params, ctx);
-  } else if (compute_capability == 70) {
-    DispatchFMHAIsAligned<T, cutlass::arch::Sm70>(params, ctx);
-  } else {
-    PADDLE_THROW(phi::errors::Unimplemented(
-        "Currently cutlass fused multihead attention kernel "
-        "only support arch: SM80, SM75, SM70"));
-    return;
-  }
+  // if (compute_capability == 80) {
+  //   DispatchFMHAIsAligned<T, cutlass::arch::Sm80>(params, ctx);
+  // } else if (compute_capability == 75) {
+  //   DispatchFMHAIsAligned<T, cutlass::arch::Sm75>(params, ctx);
+  // } else if (compute_capability == 70) {
+  //   DispatchFMHAIsAligned<T, cutlass::arch::Sm70>(params, ctx);
+  // } else {
+  //   PADDLE_THROW(phi::errors::Unimplemented(
+  //       "Currently cutlass fused multihead attention kernel "
+  //       "only support arch: SM80, SM75, SM70"));
+  //   return;
+  // }
 }
 
 void DispatchFusedMultiheadAttentionKernel(Params params,

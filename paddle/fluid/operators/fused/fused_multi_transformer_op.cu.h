@@ -126,6 +126,10 @@ struct Masked_multihead_attention_params {
   // TODO(wangxi): optimize with input_lengths and max_input_len?
   // [bsz, 1, 1, time_step(cache_seq_length)+1]
   const T *attn_mask;
+  // whether to broadcast num_heads(2nd) dimension for attn_mask
+  // in MMHA, if false, attn_mask shape should be
+  // [bsz, num_heads, 1, time_step(cache_seq_length)+1]
+  bool mask_broadcast_num_heads;
 
   // [2, B, num_head, max_seq_len(valid cache_seq_len), dim_head]
   // k [B, num_head, dim_head/x, max_seq_len, x], that is `seq_len` first
@@ -985,7 +989,8 @@ __global__ void masked_multihead_attention_kernel(
     // bool is_mask = false;
     if (ti < act_time_step && tid % THREADS_PER_KEY == 0) {
       // qk_max = is_mask ? qk_max : fmaxf(qk_max, qk);
-      T mask = params.attn_mask[bi * (params.timestep + 1) + ti];
+      auto mask_bhi = params.mask_broadcast_num_heads ? bi : bhi;
+      T mask = params.attn_mask[mask_bhi * (params.timestep + 1) + ti];
       qk += static_cast<float>(mask);
       qk_max = fmaxf(qk_max, qk);
 
@@ -1218,12 +1223,14 @@ void fmha(const phi::GPUContext &dev_ctx,
           int dim_head,
           int timestep,
           int rotary_emb_dims,
-          float inv_sqrt_dh) {
+          float inv_sqrt_dh,
+          const bool mask_broadcast_num_heads = true) {
   Masked_multihead_attention_params<T> params;
   params.out = out_tensor->data<T>();
   params.qkv = qkv_tensor.data<T>();
   params.qkv_bias = qkv_bias_tensor.data<T>();
   params.attn_mask = src_mask_tensor.data<T>();
+  params.mask_broadcast_num_heads = mask_broadcast_num_heads;
   params.cache_kv = cache_kv_tensor->data<T>();
 
   if (sequence_lengths_tensor) {
@@ -1283,7 +1290,8 @@ void fmha(const phi::GPUContext &dev_ctx,
           int num_head,
           int dim_head,
           int timestep,
-          float inv_sqrt_dh) {
+          float inv_sqrt_dh,
+          const bool mask_broadcast_num_heads = true) {
   fmha<T>(dev_ctx,
           qkv_tensor,
           qkv_bias_tensor,
@@ -1298,7 +1306,8 @@ void fmha(const phi::GPUContext &dev_ctx,
           dim_head,
           timestep,
           0,
-          inv_sqrt_dh);
+          inv_sqrt_dh,
+          mask_broadcast_num_heads);
 }
 
 // NOTE: simd with 16Bytes(128bit), float is 4, float16 is 8

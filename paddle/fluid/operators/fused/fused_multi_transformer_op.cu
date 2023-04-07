@@ -182,7 +182,7 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
     }
 
     auto out_seq_len = seq_len;
-    if (time_step) {
+    if (time_step) { // generation decoder stage
       PADDLE_ENFORCE_EQ(time_step->place(),
                         platform::CPUPlace(),
                         platform::errors::PreconditionNotMet(
@@ -201,8 +201,29 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
               "In decode stage, the seq_len of input must be 1, but now is %d",
               seq_len));
       out_seq_len += time_step_value;
+
     } else {
       out_seq_len += cache_offset;
+    }
+
+    // whether to broadcast 2nd dimension for src_mask, default true
+    // if mask_broadcast_num_heads if False, which means src_mask shape
+    // will be:
+    // 1. [batch_size, num_head, seq_len, seq_len] for encoder
+    // 2. [batch_size, num_heads, 1, time_step+1] for decoder
+    // and do not need to broadcast num_heads dimension when calculating
+    // attn_mask offset in MHA
+    bool mask_broadcast_num_heads = true;
+    if (src_mask_tensor.dims()[1] == 1) {
+      mask_broadcast_num_heads = true;
+    } else if (src_mask_tensor.dims()[1] == num_head) {
+      mask_broadcast_num_heads = false;
+    } else {
+      PADDLE_THROW(
+          platform::errors::InvalidArgument(
+            "Unknow dimension for attn_mask, the num_head(2nd) "
+            "dimension is invalid, it should be 1 or num_head(%d), "
+            "but got %d", num_head, src_mask_tensor.dims()[1]));
     }
 
     phi::DenseTensor q_transpose_out, kv_transpose_out, qk_out;
@@ -450,7 +471,8 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
                 dim_head,
                 time_step->data<int>()[0],
                 rotary_emb_dims,
-                1. / sqrt(dim_head));
+                1. / sqrt(dim_head),
+                mask_broadcast_num_heads);
       } else if (cache_kv_out) {  // generation context stage
         const phi::DenseTensor *pre_cache_kv_tensor =
             pre_caches.size() > 0 ? pre_caches[i] : nullptr;
@@ -523,7 +545,8 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
                                                     &attn_dropout_out,
                                                     &qktv_out,
                                                     &fmha_out,
-                                                    token_num);
+                                                    token_num,
+                                                    mask_broadcast_num_heads);
         }
         
         const T *k_ptr = nullptr;
@@ -630,7 +653,8 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
                                                     &attn_dropout_out,
                                                     &qktv_out,
                                                     &fmha_out,
-                                                    token_num);
+                                                    token_num,
+                                                    mask_broadcast_num_heads);
         }
         
       }
@@ -991,6 +1015,26 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
       out_seq_len += cache_offset;
     }
 
+    // whether to broadcast 2nd dimension for src_mask, default true
+    // if mask_broadcast_num_heads if False, which means src_mask shape
+    // will be:
+    // 1. [batch_size, num_head, seq_len, seq_len] for encoder
+    // 2. [batch_size, num_heads, 1, time_step+1] for decoder
+    // and do not need to broadcast num_heads dimension when calculating
+    // attn_mask offset in MHA
+    bool mask_broadcast_num_heads = true;
+    if (src_mask->dims()[1] == 1) {
+      mask_broadcast_num_heads = true;
+    } else if (src_mask->dims()[1] == num_head) {
+      mask_broadcast_num_heads = false;
+    } else {
+      PADDLE_THROW(
+          platform::errors::InvalidArgument(
+            "Unknow dimension for attn_mask, the num_head(2nd) "
+            "dimension is invalid, it should be 1 or num_head(%d), "
+            "but got %d", num_head, src_mask->dims()[1]));
+    }
+
     phi::DenseTensor q_transpose_out, kv_transpose_out, qk_out;
     q_transpose_out.Resize({{bsz, num_head, seq_len, dim_head}});
     auto *q_transpose_out_data =
@@ -1230,7 +1274,8 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
                 dim_head,
                 src_mask->dims()[3] - 1,
                 rotary_emb_dims,
-                1. / sqrt(dim_head));
+                1. / sqrt(dim_head),
+                mask_broadcast_num_heads);
       } else if (cache_kv_out) {  // generation context stage
         const phi::DenseTensor *pre_cache_kv_tensor =
             pre_caches.size() > 0 ? pre_caches[i] : nullptr;
@@ -1305,7 +1350,8 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
                                                     &attn_dropout_out,
                                                     &qktv_out,
                                                     &fmha_out,
-                                                    token_num);
+                                                    token_num,
+                                                    mask_broadcast_num_heads);
         }
         
         const T *k_ptr = nullptr;
