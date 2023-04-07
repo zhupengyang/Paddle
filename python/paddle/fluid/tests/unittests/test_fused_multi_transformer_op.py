@@ -1435,8 +1435,6 @@ class TestFusedMultiTransformerOpSrcnMaskNumHeadsEncoder(TestFusedMultiTransform
         self.gen_cache_kv = True 
         self.has_attn_mask = True
         self.mask_broadcast_num_head = False
-        self.query_length = 1
-        self.key_length, self.value_length = 1, 1
         self.layers = 4  # even layers
 
 
