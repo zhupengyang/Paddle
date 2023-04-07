@@ -130,6 +130,7 @@ class TestFusedMultiTransformerOp(OpTest):
         # self.attn_mask_type = np.bool_
         self.pre_layer_norm = True
         self.has_attn_mask = True
+        self.mask_broadcast_num_head = True
 
         # has_cache_kv, gen_cache_kv, stage
         # False,        False,        not generation
@@ -141,8 +142,6 @@ class TestFusedMultiTransformerOp(OpTest):
         self.rotary_embs = None
         self.rotary_emb_dims = 0
         self.use_geglu = False
-
-        self.remove_padding = False
 
         self.remove_padding = False
 
@@ -236,7 +235,9 @@ class TestFusedMultiTransformerOp(OpTest):
         if self.has_attn_mask:
             # [B, n_head, seq_len, out_seq_len]
             self.attn_mask = np.ones(
-                (self.batch_size, 1, self.query_length, out_seq_len),
+                (self.batch_size,
+                 1 if self.mask_broadcast_num_head else self.num_heads,
+                 self.query_length, out_seq_len),
                 dtype=self.attn_mask_type,
             )
             if self.attn_mask_type == np.int64:
@@ -1425,6 +1426,30 @@ class TestFusedMultiTransformerOpVariableDecoder3(TestFusedMultiTransformerOp):
         self.key_length, self.value_length = 1, 1
         self.layers = 4  # even layers
         self.rotary_emb_dims = 2
+
+
+class TestFusedMultiTransformerOpSrcnMaskNumHeadsEncoder(TestFusedMultiTransformerOp):
+    def config(self):
+        super().config()
+        self.has_cache_kv = True
+        self.gen_cache_kv = True 
+        self.has_attn_mask = True
+        self.mask_broadcast_num_head = False
+        self.query_length = 1
+        self.key_length, self.value_length = 1, 1
+        self.layers = 4  # even layers
+
+
+class TestFusedMultiTransformerOpSrcnMaskNumHeadsDecoder(TestFusedMultiTransformerOp):
+    def config(self):
+        super().config()
+        self.has_cache_kv = True
+        self.gen_cache_kv = False
+        self.has_attn_mask = True
+        self.mask_broadcast_num_head = False
+        self.query_length = 1
+        self.key_length, self.value_length = 1, 1
+        self.layers = 4  # even layers
 
 
 class TestFusedMultiTransformerOpPreCacheStatic1(TestFusedMultiTransformerOp):
