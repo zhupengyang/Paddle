@@ -31,6 +31,21 @@
 
 namespace phi {
 
+template <typename T>
+struct DataTypeTraits {
+  using DataType = T;
+};
+
+template <>
+struct DataTypeTraits<phi::dtype::float16> {
+  using DataType = half;
+};
+
+template <>
+struct DataTypeTraits<phi::dtype::bfloat16> {
+  using DataType = __nv_bfloat16;
+};
+
 #define FINAL_MASK 0xFFFFFFFF
 
 #define FIXED_BLOCK_DIM_BASE(dim, ...) \
@@ -516,6 +531,8 @@ void TopPSamplingKernel(const Context& dev_ctx,
                         const DenseTensor& ps,
                         DenseTensor* out,
                         DenseTensor* ids) {
+  typedef DataTypeTraits<T> traits_;
+  typedef typename traits_::DataType DataType_;
   auto cu_stream = dev_ctx.stream();
   const auto* input = &x;
   // get the input dims
@@ -658,3 +675,4 @@ PD_REGISTER_KERNEL(top_p_sampling,
                    phi::TopPSamplingKernel,
                    float,
                    phi::dtype::float16) {}
+                  //  phi::dtype::bfloat16) {}

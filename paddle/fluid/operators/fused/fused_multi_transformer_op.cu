@@ -406,6 +406,7 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
       }
 #ifdef _DEBUG_FUSED_MULTI_TRANSFORMER
       VLOG(0) << "step1";
+      VLOG(0) << "buf1:" << *buf1;
 #endif
 
       // step2. qkv
@@ -636,6 +637,7 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
       }
 #ifdef _DEBUG_FUSED_MULTI_TRANSFORMER
       VLOG(0) << "step3";
+      VLOG(0) << "fmha_out:" << fmha_out;
 #endif
       VLOG(5)<<"Doing out_linear gemm, mnk:"<<token_num<<", "<<dim_embed<<", "<<hidden_size;
       if (pre_layer_norm) {
@@ -705,6 +707,7 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
       }
 #ifdef _DEBUG_FUSED_MULTI_TRANSFORMER
       VLOG(0) << "step5";
+      VLOG(0) << "ffn1_input:" << *buf1;
 #endif
 
       // step6. ffn matmul1
@@ -723,6 +726,7 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
 
 #ifdef _DEBUG_FUSED_MULTI_TRANSFORMER
       VLOG(0) << "step6";
+      VLOG(0) << "ffn1_output:" << ffn1_out;
 #endif
 
       // step7. ffn2 matmul
@@ -1184,6 +1188,7 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
       }
 #ifdef _DEBUG_FUSED_MULTI_TRANSFORMER
       VLOG(0) << "step1";
+      VLOG(0) << "ln1_out:" << *buf1;
 #endif
 
       // step2. qkv
@@ -1206,6 +1211,7 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
       }
 #ifdef _DEBUG_FUSED_MULTI_TRANSFORMER
       VLOG(0) << "step2";
+      VLOG(0) << "qkv_out:" << qkv_out;
 #endif
 
       // step3. fmha
@@ -1417,6 +1423,7 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
       }
 #ifdef _DEBUG_FUSED_MULTI_TRANSFORMER
       VLOG(0) << "step3";
+      VLOG(0) << "fmha_out:" << fmha_out;
 #endif
       VLOG(5)<<"Doing out_linear gemm, mnk:"<<token_num<<", "<<dim_embed<<", "<<hidden_size;
       if (pre_layer_norm) {        
@@ -1488,6 +1495,7 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
       }
 #ifdef _DEBUG_FUSED_MULTI_TRANSFORMER
       VLOG(0) << "step5";
+      VLOG(0) << "ffn1_input:" << *buf1;
 #endif
 
       // step6. ffn matmul1
@@ -1504,6 +1512,7 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
       }
 #ifdef _DEBUG_FUSED_MULTI_TRANSFORMER
       VLOG(0) << "step6";
+      VLOG(0) << "ffn1_output:" << ffn1_out;
 #endif
 
       // step7. act bias
@@ -1533,6 +1542,12 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
       }
 #ifdef _DEBUG_FUSED_MULTI_TRANSFORMER
       VLOG(0) << "step8.0";
+      if (pre_layer_norm) {
+        VLOG(0) << "ffn2_out:" << *buf1;
+      } else {
+        VLOG(0) << "ffn2_out:" << *buf0;
+      }
+
 #endif
 
       if (pre_layer_norm) {
@@ -1552,6 +1567,11 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
       }
 #ifdef _DEBUG_FUSED_MULTI_TRANSFORMER
       VLOG(0) << "step8.1";
+      if (pre_layer_norm) {
+        VLOG(0) << "ffn2_out_rd:" << *buf1;
+      } else {
+        VLOG(0) << "ffn2_out_rd:" << *buf0;
+      }
 #endif
 
       // step9. residual bias
@@ -1599,6 +1619,7 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
       }
 #ifdef _DEBUG_FUSED_MULTI_TRANSFORMER
       VLOG(0) << "step9";
+      VLOG(0) << "residual_out:" << *buf1;
 #endif
       if (pre_layer_norm) {
         x_data = buf1->data<T>();
@@ -1634,6 +1655,7 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
 namespace ops = paddle::operators;
 namespace plat = paddle::platform;
 REGISTER_OP_CUDA_KERNEL(fused_multi_transformer,
+                        ops::FusedMultiTransformerOpKernel<plat::bfloat16>,
                         ops::FusedMultiTransformerOpKernel<plat::float16>,
                         ops::FusedMultiTransformerOpKernel<float>
                         );

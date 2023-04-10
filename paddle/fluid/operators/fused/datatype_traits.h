@@ -52,5 +52,11 @@ struct PDDataTypeTraits<phi::dtype::float16> {
   using DataType = half;
 };
 
+template <>
+class PDDataTypeTraits<phi::dtype::bfloat16> {
+ public:
+  using DataType = __nv_bfloat16;
+};
+
 }  // namespace operators
 }  // namespace paddle

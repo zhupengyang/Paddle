@@ -38,6 +38,11 @@ struct DataTypeTraits<cutlass::half_t> {
   using DataType = phi::dtype::float16;
 };
 
+template <>
+struct DataTypeTraits<cutlass::bfloat16_t> {
+  using DataType = phi::dtype::bfloat16;
+};
+
 
 struct Params {
   // meta params
@@ -363,20 +368,20 @@ void DispatchFMHAArchTag(Params params, const phi::GPUContext& ctx) {
   //   return;
   // }
 
-  // LaunchMultiHeadAttentionKernel<T, cutlass::arch::Sm80, true, false, 32, 128, false, true, false>(params, ctx);
+  LaunchMultiHeadAttentionKernel<T, cutlass::arch::Sm80, true, false, 32, 128, false, true, false>(params, ctx);
 
-  if (compute_capability == 80) {
-    DispatchFMHAIsAligned<T, cutlass::arch::Sm80>(params, ctx);
-  } else if (compute_capability == 75) {
-    DispatchFMHAIsAligned<T, cutlass::arch::Sm75>(params, ctx);
-  } else if (compute_capability == 70) {
-    DispatchFMHAIsAligned<T, cutlass::arch::Sm70>(params, ctx);
-  } else {
-    PADDLE_THROW(phi::errors::Unimplemented(
-        "Currently cutlass fused multihead attention kernel "
-        "only support arch: SM80, SM75, SM70"));
-    return;
-  }
+  // if (compute_capability == 80) {
+  //   DispatchFMHAIsAligned<T, cutlass::arch::Sm80>(params, ctx);
+  // } else if (compute_capability == 75) {
+  //   DispatchFMHAIsAligned<T, cutlass::arch::Sm75>(params, ctx);
+  // } else if (compute_capability == 70) {
+  //   DispatchFMHAIsAligned<T, cutlass::arch::Sm70>(params, ctx);
+  // } else {
+  //   PADDLE_THROW(phi::errors::Unimplemented(
+  //       "Currently cutlass fused multihead attention kernel "
+  //       "only support arch: SM80, SM75, SM70"));
+  //   return;
+  // }
 }
 
 void DispatchFusedMultiheadAttentionKernel(Params params,
@@ -385,12 +390,14 @@ void DispatchFusedMultiheadAttentionKernel(Params params,
     return DispatchFMHAArchTag<float>(params, ctx);
   } else if (params.datatype == DataType::FLOAT16) {
     return DispatchFMHAArchTag<cutlass::half_t>(params, ctx);
+  } else if(params.datatype == DataType::BFLOAT16) {
+    return DispatchFMHAArchTag<cutlass::bfloat16_t>(params, ctx);
   } else {
     PADDLE_ENFORCE_EQ(true,
                       false,
                       phi::errors::Unimplemented(
                           "Currently cutlass fused multihead attention kernel "
-                          "only support datatype: float32 and float16. "));
+                          "only support datatype: float32, float16 and bfloat16. "));
     return;
   }
 }
@@ -509,6 +516,24 @@ void MultiHeadAttentionVariableWrapper(const Context& ctx,
 
 template void MultiHeadAttentionVariableWrapper(
     const phi::GPUContext& ctx,
+    phi::dtype::bfloat16* query,
+    phi::dtype::bfloat16* key,
+    phi::dtype::bfloat16* value,
+    const int* seq_lens,
+    const phi::dtype::bfloat16* mask,
+    const float scale,
+    const bool causal,
+    const int64_t batch_size, 
+    const int64_t num_heads, 
+    const int64_t seq_len, 
+    const int64_t out_seq_len, 
+    const int64_t head_size,
+    const int64_t value_head_size,
+    phi::dtype::bfloat16* output
+);
+
+template void MultiHeadAttentionVariableWrapper(
+    const phi::GPUContext& ctx,
     phi::dtype::float16* query,
     phi::dtype::float16* key,
     phi::dtype::float16* value,
@@ -552,4 +577,5 @@ PD_REGISTER_KERNEL(
     ALL_LAYOUT,
     phi::fusion::MultiHeadAttentionVariableForwardKernel,
     float,
-    phi::dtype::float16) { kernel->InputAt(3).SetDataType(phi::DataType::INT32); }
+    phi::dtype::float16,
+    phi::dtype::bfloat16) { kernel->InputAt(3).SetDataType(phi::DataType::INT32); }
