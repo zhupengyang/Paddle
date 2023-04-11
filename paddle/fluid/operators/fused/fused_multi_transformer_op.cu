@@ -56,8 +56,6 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
  public:
   void Compute(const framework::ExecutionContext &ctx) const override {
     using U = LayerNormParamType<T>;
-    VLOG(0) << "fuse_mt type: " << phi::CppTypeToDataType<T>::Type();
-    VLOG(0) << "fuse_mt ln type: " << phi::CppTypeToDataType<U>::Type();
     
     auto &dev_ctx = ctx.cuda_device_context();
 
