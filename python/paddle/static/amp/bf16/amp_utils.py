@@ -491,7 +491,6 @@ def cast_parameters_to_bf16(place, program, scope=None, to_bf16_var_names=None):
                                                will be set to BF16. Usually, it is the returned
                                                value of `cast_model_to_bf16` API.
     """
-    print("in cast bf16")
     all_parameters = []
     for block in program.blocks:
         all_parameters.extend(block.all_parameters())
@@ -501,8 +500,6 @@ def cast_parameters_to_bf16(place, program, scope=None, to_bf16_var_names=None):
     for param in all_parameters:
         if param.name in bf16_var_names:
             _logger.debug(f"---- cast {param.name} to bf16 dtype ----")
-            print("param.name: ", var_scope.find_var(param.name))
-            print("param.tensor: ", var_scope.find_var(param.name).get_tensor())
             param_t = var_scope.find_var(param.name).get_tensor()
             data = np.array(param_t)
             param_t.set(convert_float_to_uint16(data), place)

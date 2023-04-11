@@ -46,8 +46,10 @@ class TestFusedMultiTransformerOp(OpTest):
         # make sure local development precision
         if "V100" in paddle.device.cuda.get_device_name():
             self.atol = 1e-4
-        if self.x_type is 'float16' or self.x_type is 'bfloat16':
+        if self.x_type is 'float16':
             self.atol = 1e-1
+        elif self.x_type is 'bfloat16':
+            self.atol = 1e-2
 
         # paddle.set_default_dtype(self.x_type)
         self.__class__.op_type = "fused_multi_transformer"
