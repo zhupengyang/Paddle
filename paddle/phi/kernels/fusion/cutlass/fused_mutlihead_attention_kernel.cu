@@ -328,15 +328,17 @@ void DispatchFMHAArchTag(LaunchParams params, const phi::GPUContext& ctx) {
 void DispatchFusedMultiheadAttentionKernel(LaunchParams params,
                                            const phi::GPUContext& ctx) {
   if (params.datatype == DataType::FLOAT32) {
-    // return DispatchFMHAArchTag<float>(params, ctx);
+    return DispatchFMHAArchTag<float>(params, ctx);
   } else if (params.datatype == DataType::FLOAT16) {
     return DispatchFMHAArchTag<cutlass::half_t>(params, ctx);
+  } else if(params.datatype == DataType::BFLOAT16) {
+    return DispatchFMHAArchTag<cutlass::bfloat16_t>(params, ctx);
   } else {
     PADDLE_ENFORCE_EQ(true,
                       false,
                       phi::errors::Unimplemented(
                           "Currently cutlass fused multihead attention kernel "
-                          "only support datatype: float32 and float16. "));
+                          "only support datatype: float32, float16 and bfloat16. "));
     return;
   }
 }
@@ -461,6 +463,20 @@ void MultiHeadAttentionForwardKernel(const Context& ctx,
 }
 
 template void MultiHeadAttentionForwardWrapper(const phi::GPUContext& ctx,
+                                     phi::dtype::bfloat16* query,
+                                     phi::dtype::bfloat16* key,
+                                     phi::dtype::bfloat16* value,
+                                     const phi::DenseTensor* mask_tensor,
+                                     const float scale,
+                                     const bool causal,
+                                     const int64_t batch_size, 
+                                     const int64_t num_head, 
+                                     const int64_t seq_len, 
+                                     const int64_t out_seq_len, 
+                                     const int64_t head_size, 
+                                     phi::dtype::bfloat16* output); 
+
+template void MultiHeadAttentionForwardWrapper(const phi::GPUContext& ctx,
                                      phi::dtype::float16* query,
                                      phi::dtype::float16* key,
                                      phi::dtype::float16* value,
@@ -497,4 +513,5 @@ PD_REGISTER_KERNEL(
     ALL_LAYOUT,
     phi::fusion::cutlass_internal::MultiHeadAttentionForwardKernel,
     float, 
-    phi::dtype::float16) {}
+    phi::dtype::float16,
+    phi::dtype::bfloat16) {}

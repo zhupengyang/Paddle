@@ -1235,6 +1235,9 @@ static PyObject* tensor_method__setitem_eager_tensor(TensorObject* self,
         } else if (self->tensor.dtype() == phi::DataType::FLOAT16) {
           attrs["fp16_values"] =
               std::vector<float>{value_obj_tmp.cast<float>()};
+        } else if (self->tensor.dtype() == phi::DataType::BFLOAT16) {
+          attrs["bf16_values"] =
+              std::vector<float>{value_obj_tmp.cast<float>()};
         } else {
           PADDLE_THROW(platform::errors::InvalidArgument(
               "When assign a value to a paddle.Tensor, "

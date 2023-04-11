@@ -20,6 +20,12 @@ from ..fp16_lists import black_list as black_list_fp16
 from ..fp16_lists import gray_list as gray_list_fp16
 from ..fp16_lists import white_list as white_list_fp16
 
+_extra_unsupported_bf16_list = {
+    'lookup_table',
+    'lookup_table_v2',
+    'scatter',
+    'scatter_grad',
+}
 
 class AutoMixedPrecisionListsBF16:
     """
@@ -115,9 +121,11 @@ gray_list = {
 }
 
 _, _, _sys_unsupported_bf16_list = core.op_supported_infos(
-    'CPU', core.VarDesc.VarType.BF16
+    'GPU', core.VarDesc.VarType.BF16
 )
-unsupported_list = _sys_unsupported_bf16_list
+
+# _sys_unsupported_bf16_list.remove("fused_multi_transformer")
+unsupported_list = _extra_unsupported_bf16_list | _sys_unsupported_bf16_list
 
 fp32_list = black_list_fp16.copy().copy()
 fp32_list |= white_list_fp16
