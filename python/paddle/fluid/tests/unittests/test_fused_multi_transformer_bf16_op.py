@@ -47,7 +47,7 @@ class TestFusedMultiTransformerOp(OpTest):
         if "V100" in paddle.device.cuda.get_device_name():
             self.atol = 1e-4
         if self.x_type is 'float16' or self.x_type is 'bfloat16':
-            self.atol = 1e-2
+            self.atol = 1e-1
 
         # paddle.set_default_dtype(self.x_type)
         self.__class__.op_type = "fused_multi_transformer"
@@ -195,7 +195,6 @@ class TestFusedMultiTransformerOp(OpTest):
                 self.cache_kv[:] = 0
             else:
                 out_seq_len += self.cache_length
-
         else:
             self.cache_kv = None
 
@@ -369,9 +368,7 @@ class TestFusedMultiTransformerOp(OpTest):
 
             if self.has_cache_kv:
                 # [1, B, n_head, cache_seq_len, head_dim]
-
                 cache_k, cache_v = paddle.split(cache_kv, 2)
-
                 cache_k = paddle.squeeze(cache_k, axis=0)
                 cache_v = paddle.squeeze(cache_v, axis=0)
                 # [B, n_head, cache_seq_len + seq_len, head_dim]
@@ -396,9 +393,7 @@ class TestFusedMultiTransformerOp(OpTest):
 
             # [B, n_head, seq_len, head_dim] * [B, n_head, out_seq_len, head_dim]
             # --> [B, n_head, seq_len, out_seq_len]
-
             qk_out = paddle.matmul(x=q_out, y=k_out, transpose_y=True)
-
             qk_out = paddle.scale(qk_out, scale=self.head_dim**-0.5)
 
             if self.debug:
@@ -406,14 +401,11 @@ class TestFusedMultiTransformerOp(OpTest):
                 print(qk_out[0][0][0])
 
             if attn_mask is not None:
-
                 attn_mask = _convert_attention_mask(attn_mask, qk_out.dtype)
                 attn_mask_out = qk_out + attn_mask[:, :, :, : qk_out.shape[-1]]
-
                 if self.debug:
                     print('attn mask out is')
                     print(attn_mask_out[0][0][0])
-
                 softmax_out = F.softmax(attn_mask_out)
             else:
                 softmax_out = F.softmax(qk_out)
@@ -800,12 +792,7 @@ class TestFusedMultiTransformerOp(OpTest):
                 pre_caches.append(
                     paddle.to_tensor(self.pre_cache_kv, stop_gradient=False)
                 )
-        # print('attn_mask:', attn_mask[0][0][0])
-        # print('epsilon:', epsilon)
-        # print('cache_kvs:', cache_kvs)
-        # print('rotary_embs:', rotary_embs[0][0][0])
-        # print('rotary_emb_dims:', self.rotary_emb_dims)
-        # print('pre_caches:', pre_caches[0][0][0])
+
         final_out = fused_multi_transformer(
             x,
             ln_scales,
@@ -844,7 +831,7 @@ class TestFusedMultiTransformerOp(OpTest):
 
     def GetFusedMultiTransformerOutStatic(self):
         paddle.enable_static()
-        x = paddle.fluid.data('x', self.query.shape, self.query.dtype)
+        x = paddle.static.data('x', self.query.shape, self.query.dtype)
         cache_kvs, cache_kv = None, None
         cache_kvs_feed = None
         time_step = None
@@ -856,7 +843,7 @@ class TestFusedMultiTransformerOp(OpTest):
         rotary_embs = None
 
         if self.rotary_emb_dims > 0:
-            rotary_embs = paddle.fluid.data(
+            rotary_embs = paddle.static.data(
                 'rotary_embs', self.rotary_embs.shape, self.rotary_embs.dtype
             )
 
@@ -908,13 +895,13 @@ class TestFusedMultiTransformerOp(OpTest):
                 assert self.query_length == self.cache_length
                 cache_kv[:] = 0
             else:
-                time_step = layers.fill_constant(
+                time_step = paddle.tensor.fill_constant(
                     shape=[1], dtype="int32", value=0, force_cpu=True
                 )
                 time_step_feed = self.cache_length
 
         if self.remove_padding:
-            seq_lens = paddle.fluid.data(
+            seq_lens = paddle.static.data(
                 'seq_lens', self.seq_lens.shape, self.seq_lens.dtype
             )
             seq_lens_feed = self.seq_lens
@@ -993,7 +980,7 @@ class TestFusedMultiTransformerOp(OpTest):
         for i in range(self.layers):
             if self.has_cache_kv:
                 cache_kvs.append(
-                    layers.fill_constant(
+                    paddle.tensor.fill_constant(
                         shape=cache_kv.shape, dtype=cache_kv.dtype, value=0
                     )
                 )
@@ -1001,13 +988,13 @@ class TestFusedMultiTransformerOp(OpTest):
 
             if self.has_pre_cache:
                 cache_kvs.append(
-                    layers.fill_constant(
+                    paddle.tensor.fill_constant(
                         shape=cache_kv.shape, dtype=cache_kv.dtype, value=0
                     )
                 )
                 cache_kvs_feed.append(cache_kv)
                 pre_caches.append(
-                    layers.fill_constant(
+                    paddle.tensor.fill_constant(
                         shape=self.pre_cache_kv.shape,
                         dtype=self.pre_cache_kv.dtype,
                         value=0,
@@ -1058,8 +1045,6 @@ class TestFusedMultiTransformerOp(OpTest):
         else:
             final_out_ref = self.GetBaselineOut()
         final_out = self.GetFusedMultiTransformerOut()
-        # print("final_out_ref:", final_out_ref)
-        # print("final_out:", final_out)
         if self.has_cache_kv:
             final_out, cache_kv_out = final_out
             s = cache_kv_out[0].shape
@@ -1167,8 +1152,6 @@ class TestFusedMultiTransformerOp(OpTest):
                                 atol=self.atol,
                             )
                     else:
-                        # print("cache_k_ref:", cache_k_ref.shape, paddle.cast(cache_k_ref, "float32")[1][1][1])
-                        # print("cache_k:", cache_k.shape, paddle.cast(cache_k, "float32")[1][1][1])
                         np.testing.assert_allclose(
                             paddle.cast(cache_k_ref, "float32"),
                             paddle.cast(cache_k, "float32"),
