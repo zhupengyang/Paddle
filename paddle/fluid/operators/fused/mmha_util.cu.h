@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#pragma once
+
 #ifndef MMHA_UTIL_CU_H_
 #define MMHA_UTIL_CU_H_
 #include <cuda_bf16.h>

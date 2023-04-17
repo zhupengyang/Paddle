@@ -42,10 +42,29 @@ void print_tensor(const T *t, int size, const char *name){
 }
 
 template <typename T>
-struct SwishFunctor{
+struct BaseActivationFunctor {
+  using ELEMENT_TYPE = T;
 
-  inline HOSTDEVICE T operator()(T x) {
-    return x / (static_cast<T>(1) / (static_cast<T>(1) + phi::funcs::real_exp(-x)));
+  using AttrPair = std::vector<std::pair<const char*, float*>>;
+
+  AttrPair GetAttrs() { return AttrPair(); }
+};
+
+template <typename T>
+struct CudaSwishFunctor : public BaseActivationFunctor<T> {
+  using MPType = typename phi::dtype::MPTypeTrait<T>::Type;
+  MPType one = static_cast<MPType>(1.0f);
+  float beta = 1.0;
+
+  typename BaseActivationFunctor<T>::AttrPair GetAttrs() {
+    return {{"beta", &beta}};
+  }
+
+  // swish(x) = x / (1 + exp(-beta * x))
+  __device__ __forceinline__ T operator()(const T arg_x) const {
+    MPType x = static_cast<MPType>(arg_x);
+    MPType b = static_cast<MPType>(beta);
+    return static_cast<T>(x / (one + exp(-b * x)));
   }
 };
 
@@ -1540,11 +1559,11 @@ class FFNGluHelper {
                                          token_num_,
                                          hid_dim_);
     } else if (act_method_ == "swiglu") {
-      LaunchActFFNGlu<T, SwishFunctor<T>>(dev_ctx_,
-                                          bias_out->data<T>(),
-                                          output->data<T>(),
-                                          token_num_,
-                                          hid_dim_);
+      LaunchActFFNGlu<T, CudaSwishFunctor<T>>(dev_ctx_,
+                                              bias_out->data<T>(),
+                                              output->data<T>(),
+                                              token_num_,
+                                              hid_dim_);
     }
   }
 

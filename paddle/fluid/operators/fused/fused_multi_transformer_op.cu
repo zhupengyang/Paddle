@@ -56,7 +56,7 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
  public:
   void Compute(const framework::ExecutionContext &ctx) const override {
     using U = LayerNormParamType<T>;
-    
+
     auto &dev_ctx = ctx.cuda_device_context();
 
     auto *time_step = ctx.Input<phi::DenseTensor>("TimeStep");
@@ -68,7 +68,7 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
     int dim_embed = input_x_dims[2];
     int bsz_seq = bsz * seq_len;
     const std::string act_method = ctx.Attr<std::string>("act_method");
-    bool use_glu = (act_method == "geglu");
+    bool use_glu = (act_method == "geglu" || act_method == "swiglu");
     bool remove_padding = false;
     auto *sequence_lengths = ctx.Input<phi::DenseTensor>("SeqLengths");
     if (sequence_lengths) {
