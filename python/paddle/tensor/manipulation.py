@@ -1970,6 +1970,7 @@ def split(x, num_or_sections, axis=0, name=None):
             'input',
             [
                 'bool',
+                'uint16',
                 'float16',
                 'float32',
                 'float64',
@@ -2595,6 +2596,7 @@ def unsqueeze(x, axis, name=None):
             input,
             'input',
             [
+                'uint16',
                 'float16',
                 'float32',
                 'float64',
