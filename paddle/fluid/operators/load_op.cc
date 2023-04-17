@@ -129,12 +129,12 @@ namespace ops = paddle::operators;
 
 REGISTER_OPERATOR(load, ops::LoadOp, ops::LoadOpProtoMaker);
 
-PD_REGISTER_KERNEL(load, CPU, ALL_LAYOUT, ops::LoadKernel, float, phi::dtype::float16, phi::dtype::bfloat16) {}
+PD_REGISTER_KERNEL(load, CPU, ALL_LAYOUT, ops::LoadKernel, float) {}
 PD_REGISTER_KERNEL(
     load_sr, CPU, ALL_LAYOUT, ops::LoadSelectedRowsKernel, float) {}
 
 #if defined(PADDLE_WITH_CUDA) || defined(PADDLE_WITH_HIP)
-PD_REGISTER_KERNEL(load, GPU, ALL_LAYOUT, ops::LoadKernel, float, phi::dtype::float16, phi::dtype::bfloat16) {}
+PD_REGISTER_KERNEL(load, GPU, ALL_LAYOUT, ops::LoadKernel, float) {}
 PD_REGISTER_KERNEL(
     load_sr, GPU, ALL_LAYOUT, ops::LoadSelectedRowsKernel, float) {}
 #endif

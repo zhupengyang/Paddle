@@ -83,7 +83,6 @@ def _all_gather_in_static_mode(tensor_list, tensor, group, sync_op):
         tensor,
         'tensor',
         [
-            'uint16',
             'float16',
             'float32',
             'float64',
