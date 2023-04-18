@@ -42,7 +42,7 @@ class TestFusedMultiTransformerOp(OpTest):
         # FIXME(wangxi): Because there is a problem with the test precision
         #  on A100, atol is temporarily set to 1e-2, and it will be
         #  changed back after the precision problem is solved.
-        self.atol = 1e-1
+        self.atol = 1e-2
         # make sure local development precision
         if "V100" in paddle.device.cuda.get_device_name():
             self.atol = 1e-4
