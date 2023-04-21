@@ -20,8 +20,8 @@
 #include "cutlass/device_kernel.h"
 #include "paddle/fluid/operators/fused/cutlass/utils/cuda_utils.h"
 
-namespace fastertransformer {
-
+namespace paddle {
+namespace operators {
 template<typename GemmKernel>
 inline int compute_occupancy_for_kernel()
 {
@@ -47,5 +47,5 @@ inline int compute_occupancy_for_kernel()
 
     return max_active_blocks;
 }
-
-}  // namespace fastertransformer
+}  // namespace operators
+}  // namespace paddle

@@ -18,7 +18,8 @@
 
 #include "paddle/fluid/operators/fused/cutlass/cutlass_extensions/ft_gemm_configs.h"
 
-namespace fastertransformer {
+namespace paddle {
+namespace operators {
 
 struct TileShape {
     int m;
@@ -215,5 +216,5 @@ static CutlassGemmConfig estimate_best_config_from_occupancies(const std::vector
 
     return best_config;
 }
-
-}  // namespace fastertransformer
+}  // namespace operators
+}  // namespace paddle

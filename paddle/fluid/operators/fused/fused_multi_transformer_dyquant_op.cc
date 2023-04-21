@@ -216,14 +216,6 @@ class FusedMultiTransformerDyquantOpOpMaker
     AddInput("FFN2WeightScale", "FFN2WeightScale")        
         .AsDispensable()
         .AsDuplicable();
-    
-    AddInput("QKVWLLMInt8", "The qkv weight tensor.").AsDuplicable();
-    AddInput("OutLinearWLLMInt8", "The out_linear weight tensor.").AsDuplicable();
-    AddInput("FFN1WeightLLMInt8", "The linear1 weight of FusedFeedForward op")
-        .AsDuplicable();
-    AddInput("FFN2WeightLLMInt8", "The linear2 weight of FusedFeedForward op")
-        .AsDuplicable();
-
     AddOutput("CacheKVOut", "The updated cache KV. Inplace with CacheKV")
         .AsDispensable()
         .AsDuplicable();
@@ -302,8 +294,20 @@ class FusedMultiTransformerDyquantOpOpMaker
         "[dim_embed, 3, num_head, dim_head]")
         .SetDefault(true);
 
-    AddAttr<bool>("quant_weight","Whether do weight quant")
+    AddAttr<bool>("interleaved_weight","Whether do weight quant")
         .SetDefault(false);
+
+
+    AddAttr<std::string>("int8_gemm_method","int8_gemm_method")
+        .SetDefault("LLM.int8")
+        .AddCustomChecker([](const std::string &gemm_type) {
+          PADDLE_ENFORCE_EQ(
+              gemm_type == "weight-only" || gemm_type == "LLM.int8",
+              true,
+              platform::errors::InvalidArgument(
+                  "Only support `weight-only`, `LLM.int8` method for int8 gemm in"
+                  "FusedMultiTransformerDyquant. "));
+        });
 
     AddAttr<int>(
         "ring_id",

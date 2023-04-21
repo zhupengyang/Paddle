@@ -15,8 +15,8 @@
 #include "cutlass/epilogue/thread/linear_combination_silu.h"
 #include "epilogue/thread/ft_fused_activations.h"
 
-namespace fastertransformer {
-
+namespace paddle {
+namespace operators{
 struct EpilogueOpBiasSilu {};
 
 struct EpilogueOpBiasReLU {};
@@ -78,5 +78,5 @@ struct Epilogue<ElementType, ElementsPerVectorAccess, ElementAccumulator, Epilog
                                                             ElementAccumulator,
                                                             cutlass::epilogue::thread::ScaleType::Default>;
 };
-
-}  // namespace fastertransformer
+}  // namespace operators
+}  // namespace paddle

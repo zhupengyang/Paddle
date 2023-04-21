@@ -20,7 +20,8 @@
 // #include "src/fastertransformer/utils/allocator.h"
 #include <cuda_runtime_api.h>
 
-namespace fastertransformer {
+namespace paddle {
+namespace operators{
 
 /*
   This runner only supports:
@@ -42,7 +43,7 @@ public:
 
     void gemm(const T*          A,
               const WeightType* B,
-              const T*          weight_scales,
+              const float*          weight_scales,
               T*                C,
               int               m,
               int               n,
@@ -53,7 +54,7 @@ public:
 
     void gemm_bias_act(const T*          A,
                        const WeightType* B,
-                       const T*          weight_scales,
+                       const float*          weight_scales,
                        const T*          biases,
                        T*                C,
                        int               m,
@@ -71,7 +72,7 @@ private:
     template<typename EpilogueTag>
     void dispatch_to_arch(const T*          A,
                           const WeightType* B,
-                          const T*          weight_scales,
+                          const float*          weight_scales,
                           const T*          biases,
                           T*                C,
                           int               m,
@@ -86,7 +87,7 @@ private:
     template<typename EpilogueTag>
     void run_gemm(const T*          A,
                   const WeightType* B,
-                  const T*          weight_scales,
+                  const float*          weight_scales,
                   const T*          biases,
                   T*                C,
                   int               m,
@@ -138,4 +139,5 @@ public:
 
     int getWorkspaceSize(const int m, const int n, const int k);
 };
-}  // namespace fastertransformer
+}  // namespace operators
+}  // namespace paddle

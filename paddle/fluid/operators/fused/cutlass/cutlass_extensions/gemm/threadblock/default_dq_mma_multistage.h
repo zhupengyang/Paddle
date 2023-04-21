@@ -292,6 +292,8 @@ private:
         OriginalThreadMap::kThreads,
         layout::PitchLinearShape<OriginalWarpArrangement::kContiguous * ColumnsInterleaved,
                                  OriginalWarpArrangement::kStrided / ColumnsInterleaved>,
+        // layout::PitchLinearShape<OriginalWarpArrangement::kContiguous,
+        //                          OriginalWarpArrangement::kStrided / ColumnsInterleaved>,
         MmaCore::kAccessSizeInBits / sizeof_bits<ElementB>::value>;
 
 public:

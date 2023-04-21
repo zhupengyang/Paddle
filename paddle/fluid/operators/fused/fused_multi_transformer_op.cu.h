@@ -20,14 +20,19 @@ limitations under the License. */
 #pragma once
 
 #include "paddle/fluid/operators/fused/mmha_util.cu.h"
-
+#include "paddle/fluid/operators/fused/cutlass/cutlass_kernels/fpA_intB_gemm/fpA_intB_gemm_template.h"
+#include "paddle/fluid/operators/fused/llm_int8.h"
 #include <fstream> 
 #include <iomanip> 
 
 DECLARE_bool(gemm_use_half_precision_compute_type);
+DECLARE_double(custom_llm_int8_threshold);
 
 namespace paddle {
 namespace operators {
+
+template class CutlassFpAIntBGemmRunner<PDDataTypeTraits<paddle::platform::float16>::DataType, uint8_t>;
+// template class CutlassFpAIntBGemmRunner<PDDataTypeTraits<paddle::platform::bfloat16>::DataType, uint8_t>;
 
 template <typename T>
 void print_tensor(const T *t, int size, const char *name){
@@ -357,7 +362,7 @@ inline __device__ void convert_from_float(uint4 &dst, Float8_ src) {  // NOLINT
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-#ifdef ENABLE_BF16
+// #ifdef ENABLE_BF16
 inline __device__ void convert_from_float(__nv_bfloat16 &dst, float src) {
   dst = __float2bfloat16(src);
 }
@@ -400,7 +405,7 @@ inline __device__ void convert_from_float(bf16_8_t &dst, Float8_ src) {
   dst.w = __floats2bfloat162_rn(src.w.x, src.w.y);
 #endif
 }
-#endif  // ENABLE_BF16
+// #endif  // ENABLE_BF16
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -1650,7 +1655,6 @@ class FFNGluHelper {
                                               hid_dim_);
     }
   }
-
  private:
   const phi::GPUContext &dev_ctx_;
   std::string act_method_;
@@ -1658,6 +1662,89 @@ class FFNGluHelper {
   int hid_dim_;
   int dim_ffn_;
   int dim_embed_;
+  std::string gemm_method_;
+};
+
+template <typename T>
+class FFNGluDyquantHelper {
+ public:
+  FFNGluDyquantHelper(const phi::GPUContext &dev_ctx,
+               const std::string &act_method,
+               int token_num,
+               int hid_dim,
+               int dim_ffn,
+               int dim_embed,
+               const std::string gemm_method)
+      : dev_ctx_(dev_ctx),
+        act_method_(act_method),
+        token_num_(token_num),
+        hid_dim_(hid_dim),
+        dim_ffn_(dim_ffn),
+        dim_embed_(dim_embed),
+        gemm_method_(gemm_method) {}
+
+  // dst = act(fc(src[0]) + bias) * src[1]
+  void Compute(const phi::DenseTensor *input,
+               const phi::DenseTensor *weight,
+               const phi::DenseTensor *scale,
+               const phi::DenseTensor *bias,
+               phi::DenseTensor *workspace,
+               phi::DenseTensor *bias_out,
+               phi::DenseTensor *output) {
+    // input's shape [token_num, dim_ffn], bias' shape [dim_ffn]
+    // output's shape [token_num, hid_dim], bias_out's shape [token_num,
+    // dim_ffn]
+
+    if(gemm_method_=="weight-only") {
+      auto mixed_gemm_runner = paddle::operators::CutlassFpAIntBGemmRunner<typename PDDataTypeTraits<T>::DataType, uint8_t>();
+      mixed_gemm_runner.gemm_bias_act(
+          reinterpret_cast<const typename PDDataTypeTraits<T>::DataType *>(input->data<T>()),
+          reinterpret_cast<const uint8_t*>(weight->data<int8_t>()),
+          scale->data<float>(),
+          reinterpret_cast<const typename PDDataTypeTraits<T>::DataType *>(bias->data<T>()),
+          reinterpret_cast<typename PDDataTypeTraits<T>::DataType *>(bias_out),
+          token_num_,
+          dim_ffn_,
+          dim_embed_,
+          "none",
+          reinterpret_cast<char*>(workspace->data<uint8_t>()),
+          workspace->numel(),
+          dev_ctx_.stream()
+        );
+    } else if(gemm_method_=="LLM.int8") {
+        LLMGemm<T>(dev_ctx_, 
+              weight,
+              input,
+              scale, 
+              FLAGS_custom_llm_int8_threshold,
+              bias_out,
+              workspace,
+              "ffn1_"+ act_method_,
+              token_num_, dim_embed_, dim_ffn_);
+    }
+
+    if (act_method_ == "geglu") {
+      LaunchActFFNGlu<T, GeluFunctor<T>>(dev_ctx_,
+                                         bias_out->data<T>(),
+                                         output->data<T>(),
+                                         token_num_,
+                                         hid_dim_);
+    } else if (act_method_ == "swiglu") {
+      LaunchActFFNGlu<T, CudaSwishFunctor<T>>(dev_ctx_,
+                                              bias_out->data<T>(),
+                                              output->data<T>(),
+                                              token_num_,
+                                              hid_dim_);
+    }
+  }
+ private:
+  const phi::GPUContext &dev_ctx_;
+  std::string act_method_;
+  int token_num_;
+  int hid_dim_;
+  int dim_ffn_;
+  int dim_embed_;
+  std::string gemm_method_;
 };
 
 }  // namespace

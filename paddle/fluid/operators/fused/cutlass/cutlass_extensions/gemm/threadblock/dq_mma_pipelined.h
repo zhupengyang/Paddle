@@ -141,7 +141,8 @@ public:
                                                      Operand::kB,
                                                      typename SmemIteratorScale::Fragment::Element,
                                                      LayoutScale,
-                                                     32>;
+                                                     32,
+                                                     typename Operator::FragmentA::Element>;
 
     /// Complex transform on A operand
     static ComplexTransform const kTransformA = Operator::kTransformA;

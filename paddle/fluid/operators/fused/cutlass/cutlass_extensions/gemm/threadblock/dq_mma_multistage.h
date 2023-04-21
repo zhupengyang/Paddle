@@ -142,7 +142,13 @@ public:
     using ArchTag = arch::Sm80;
 
     using Dequantizer =
-        warp::MmaTensorOpDequantizer<Operator, typename Base::WarpGemm, Operand::kB, ElementScale, LayoutScale, 32>;
+        warp::MmaTensorOpDequantizer<Operator, 
+                                    typename Base::WarpGemm, 
+                                    Operand::kB, 
+                                    ElementScale, 
+                                    LayoutScale, 
+                                    32,
+                                    typename Operator::FragmentA::Element>;
 
     /// Complex transform on A operand
     static ComplexTransform const kTransformA = Operator::kTransformA;
@@ -473,7 +479,6 @@ public:
         this->warp_tile_iterator_A_.load(warp_frag_A[0]);
         this->warp_tile_iterator_B_.load(warp_frag_B[0]);
         warp_dequantizer_.load(warp_frag_scales);
-
         ++this->warp_tile_iterator_A_;
         ++this->warp_tile_iterator_B_;
 
@@ -517,7 +522,6 @@ public:
                 typename TransformBAfterLDS::result_type converted_frag_B =
                     lds_converter(warp_frag_B[warp_tileB_k_load_offset % 2]);
                 warp_dequantizer_.dequantize(converted_frag_B, warp_frag_scales);
-
                 run_warp_mma(
                     warp_mma, accum, warp_frag_A[warp_mma_k % 2], converted_frag_B, accum, warp_tileB_k_compute_offset);
 

@@ -33,7 +33,8 @@
 #include "paddle/fluid/operators/fused/cutlass/cutlass_kernels/cutlass_heuristic.h"
 #include "paddle/fluid/operators/fused/cutlass/cutlass_kernels/fpA_intB_gemm/fpA_intB_gemm.h"
 #include "paddle/fluid/operators/fused/cutlass/utils/cuda_utils.h"
-namespace fastertransformer {
+namespace paddle {
+namespace operators{
 
 template<typename T,
          typename WeightType,
@@ -44,7 +45,7 @@ template<typename T,
          int Stages>
 void generic_mixed_gemm_kernelLauncher(const T*          A,
                                        const WeightType* B,
-                                       const T*          weight_scales,
+                                       const float*          weight_scales,
                                        const T*          biases,
                                        T*                C,
                                        int               m,
@@ -56,8 +57,10 @@ void generic_mixed_gemm_kernelLauncher(const T*          A,
                                        cudaStream_t      stream,
                                        int*              occupancy = nullptr)
 {
-    static_assert(cutlass::platform::is_same<T, half>::value || cutlass::platform::is_same<T, float>::value,
-                  "Specialized for half, float");
+    static_assert(cutlass::platform::is_same<T, __nv_bfloat16>::value || cutlass::platform::is_same<T, half>::value
+                      || cutlass::platform::is_same<T, float>::value,
+                  "Specialized for bfloat16, half, float");
+
     static_assert(cutlass::platform::is_same<T, WeightType>::value
                       || cutlass::platform::is_same<WeightType, uint8_t>::value
                       || cutlass::platform::is_same<WeightType, cutlass::uint4b_t>::value,
@@ -66,12 +69,19 @@ void generic_mixed_gemm_kernelLauncher(const T*          A,
     // The cutlass type for the input elements. This is needed to convert to cutlass::half_t if necessary.
     using ElementType_ =
         typename cutlass::platform::conditional<cutlass::platform::is_same<T, half>::value, cutlass::half_t, T>::type;
-    using ElementType       = ElementType_;
 
+    using ElementType =
+        typename cutlass::platform::conditional<cutlass::platform::is_same<ElementType_, __nv_bfloat16>::value,
+                                                cutlass::bfloat16_t, ElementType_>::type;
+    
     using CutlassWeightType_ = typename cutlass::platform::
         conditional<cutlass::platform::is_same<WeightType, half>::value, cutlass::half_t, WeightType>::type;
-    using CutlassWeightType = CutlassWeightType_;
 
+    using CutlassWeightType =
+        typename cutlass::platform::conditional<cutlass::platform::is_same<CutlassWeightType_, __nv_bfloat16>::value,
+                                                cutlass::bfloat16_t,
+                                                CutlassWeightType_>::type;
+    
     // We need separate config for each architecture since we will target different tensorcore instructions. For float,
     // we do not target TCs.
     using MixedGemmArchTraits = cutlass::gemm::kernel::MixedGemmArchTraits<ElementType, CutlassWeightType, arch>;
@@ -122,7 +132,7 @@ void generic_mixed_gemm_kernelLauncher(const T*          A,
     typename Gemm::Arguments args({m, n, k},
                                   {reinterpret_cast<ElementType*>(const_cast<T*>(A)), k},
                                   {reinterpret_cast<CutlassWeightType*>(const_cast<WeightType*>(B)), ldb},
-                                  {reinterpret_cast<ElementType*>(const_cast<T*>(weight_scales)), 0},
+                                  {reinterpret_cast<float*>(const_cast<float*>(weight_scales)), 0},
                                   {reinterpret_cast<ElementType*>(const_cast<T*>(biases)), 0},
                                   {reinterpret_cast<ElementType*>(C), n},
                                   gemm_config.split_k_factor,
@@ -140,8 +150,7 @@ void generic_mixed_gemm_kernelLauncher(const T*          A,
 
     Gemm gemm;
     if (gemm.get_workspace_size(args) > workspace_bytes) {
-        VLOG(1)<<
-            "Requested split-k but workspace size insufficient. Falling back to non-split-k implementation.";
+        std::cout<<"Requested split-k but workspace size insufficient. Falling back to non-split-k implementation."<<std::endl;
         // If requested split-k factor will require more workspace bytes, revert to standard gemm.
         args.batch_count = 1;
     }
@@ -179,7 +188,7 @@ template<typename T,
 struct dispatch_stages {
     static void dispatch(const T*          A,
                          const WeightType* B,
-                         const T*          weight_scales,
+                         const float*          weight_scales,
                          const T*          biases,
                          T*                C,
                          int               m,
@@ -192,7 +201,8 @@ struct dispatch_stages {
                          int*              occupancy = nullptr)
     {
 
-        VLOG(3)<<__PRETTY_FUNCTION__;        std::string err_msg = "Cutlass fpA_intB gemm. Not instantiates for arch "
+        // std::cout<<__PRETTY_FUNCTION__<<std::endl;        
+        std::string err_msg = "Cutlass fpA_intB gemm. Not instantiates for arch "
                               + std::to_string(arch::kMinComputeCapability) + " with stages set to "
                               + std::to_string(Stages);
         throw std::runtime_error("[FT Error][dispatch_stages::dispatch] " + err_msg);
@@ -208,7 +218,7 @@ template<typename T,
 struct dispatch_stages<T, WeightType, arch, EpilogueTag, ThreadblockShape, WarpShape, 2> {
     static void dispatch(const T*          A,
                          const WeightType* B,
-                         const T*          weight_scales,
+                         const float*          weight_scales,
                          const T*          biases,
                          T*                C,
                          int               m,
@@ -221,7 +231,9 @@ struct dispatch_stages<T, WeightType, arch, EpilogueTag, ThreadblockShape, WarpS
                          int*              occupancy = nullptr)
     {
 
-        VLOG(3)<<__PRETTY_FUNCTION__;        generic_mixed_gemm_kernelLauncher<T, WeightType, arch, EpilogueTag, ThreadblockShape, WarpShape, 2>(
+        // std::cout<<__PRETTY_FUNCTION__<<std::endl;        
+
+        generic_mixed_gemm_kernelLauncher<T, WeightType, arch, EpilogueTag, ThreadblockShape, WarpShape, 2>(
             A, B, weight_scales, biases, C, m, n, k, gemm_config, workspace, workspace_bytes, stream, occupancy);
     }
 };
@@ -242,7 +254,7 @@ struct dispatch_stages<T,
                        typename std::enable_if<(Stages > 2)>::type> {
     static void dispatch(const T*          A,
                          const WeightType* B,
-                         const T*          weight_scales,
+                         const float*          weight_scales,
                          const T*          biases,
                          T*                C,
                          int               m,
@@ -273,7 +285,7 @@ template<typename T,
          typename WarpShape>
 void dispatch_gemm_config(const T*          A,
                           const WeightType* B,
-                          const T*          weight_scales,
+                          const float*          weight_scales,
                           const T*          biases,
                           T*                C,
                           int               m,
@@ -312,7 +324,7 @@ void dispatch_gemm_config(const T*          A,
 template<typename T, typename WeightType, typename arch, typename EpilogueTag>
 void dispatch_gemm_to_cutlass(const T*          A,
                               const WeightType* B,
-                              const T*          weight_scales,
+                              const float*          weight_scales,
                               const T*          biases,
                               T*                C,
                               int               m,
@@ -325,7 +337,7 @@ void dispatch_gemm_to_cutlass(const T*          A,
                               int*              occupancy = nullptr)
 {
 
-    VLOG(3)<<__PRETTY_FUNCTION__;
+    // std::cout<<__PRETTY_FUNCTION__<<std::endl;
     // Note that SIMT configs are omitted here since they are not supported for fpA_intB.
     // We also only instantiate configs here where threadblockShapeM == warpShapeM since those usually perform the best
     // for mixed type gemms.
@@ -393,7 +405,7 @@ void dispatch_gemm_to_cutlass(const T*          A,
 template<typename T, typename WeightType>
 CutlassFpAIntBGemmRunner<T, WeightType>::CutlassFpAIntBGemmRunner()
 {
-    VLOG(3)<<__PRETTY_FUNCTION__;    
+    // std::cout<<__PRETTY_FUNCTION__<<std::endl;    
     int device{-1};
     check_cuda_error(cudaGetDevice(&device));
     sm_ = getSMVersion();
@@ -403,13 +415,14 @@ CutlassFpAIntBGemmRunner<T, WeightType>::CutlassFpAIntBGemmRunner()
 template<typename T, typename WeightType>
 CutlassFpAIntBGemmRunner<T, WeightType>::~CutlassFpAIntBGemmRunner()
 {
-    VLOG(3)<<__PRETTY_FUNCTION__;}
+    // std::cout<<__PRETTY_FUNCTION__<<std::endl;
+}
 
 template<typename T, typename WeightType>
 template<typename EpilogueTag>
 void CutlassFpAIntBGemmRunner<T, WeightType>::dispatch_to_arch<EpilogueTag>(const T*          A,
                                                                             const WeightType* B,
-                                                                            const T*          weight_scales,
+                                                                            const float*          weight_scales,
                                                                             const T*          biases,
                                                                             T*                C,
                                                                             int               m,
@@ -421,15 +434,17 @@ void CutlassFpAIntBGemmRunner<T, WeightType>::dispatch_to_arch<EpilogueTag>(cons
                                                                             cudaStream_t      stream,
                                                                             int*              occupancy)
 {
-    VLOG(3)<<__PRETTY_FUNCTION__;    if (sm_ >= 70 && sm_ < 75) {
-        dispatch_gemm_to_cutlass<T, WeightType, cutlass::arch::Sm70, EpilogueTag>(
-            A, B, weight_scales, biases, C, m, n, k, workspace_ptr, workspace_bytes, gemm_config, stream, occupancy);
-    }
-    else if (sm_ >= 75 && sm_ < 80) {
-        dispatch_gemm_to_cutlass<T, WeightType, cutlass::arch::Sm75, EpilogueTag>(
-            A, B, weight_scales, biases, C, m, n, k, workspace_ptr, workspace_bytes, gemm_config, stream, occupancy);
-    }
-    else if (sm_ >= 80 && sm_ < 90) {
+    // std::cout<<__PRETTY_FUNCTION__<<std::endl;    
+    // if (sm_ >= 70 && sm_ < 75) {
+    //     dispatch_gemm_to_cutlass<T, WeightType, cutlass::arch::Sm70, EpilogueTag>(
+    //         A, B, weight_scales, biases, C, m, n, k, workspace_ptr, workspace_bytes, gemm_config, stream, occupancy);
+    // }
+    // else if (sm_ >= 75 && sm_ < 80) {
+    //     dispatch_gemm_to_cutlass<T, WeightType, cutlass::arch::Sm75, EpilogueTag>(
+    //         A, B, weight_scales, biases, C, m, n, k, workspace_ptr, workspace_bytes, gemm_config, stream, occupancy);
+    // }
+    // else 
+    if (sm_ >= 80 && sm_ < 90) {
         dispatch_gemm_to_cutlass<T, WeightType, cutlass::arch::Sm80, EpilogueTag>(
             A, B, weight_scales, biases, C, m, n, k, workspace_ptr, workspace_bytes, gemm_config, stream, occupancy);
     }
@@ -443,7 +458,7 @@ template<typename T, typename WeightType>
 template<typename EpilogueTag>
 void CutlassFpAIntBGemmRunner<T, WeightType>::run_gemm<EpilogueTag>(const T*          A,
                                                                     const WeightType* B,
-                                                                    const T*          weight_scales,
+                                                                    const float*          weight_scales,
                                                                     const T*          biases,
                                                                     T*                C,
                                                                     int               m,
@@ -453,7 +468,7 @@ void CutlassFpAIntBGemmRunner<T, WeightType>::run_gemm<EpilogueTag>(const T*    
                                                                     const size_t      workspace_bytes,
                                                                     cudaStream_t      stream)
 {
-    VLOG(3)<<__PRETTY_FUNCTION__;    
+    // std::cout<<__PRETTY_FUNCTION__<<std::endl;    
     static constexpr bool          is_weight_only    = !std::is_same<T, WeightType>::value;
     const bool is_weight_only_encoder = m>=512 ? true:false;
     std::vector<CutlassGemmConfig> candidate_configs = get_candidate_configs(sm_, is_weight_only, is_weight_only_encoder, false);
@@ -494,7 +509,7 @@ void CutlassFpAIntBGemmRunner<T, WeightType>::run_gemm<EpilogueTag>(const T*    
 template<typename T, typename WeightType>
 void CutlassFpAIntBGemmRunner<T, WeightType>::gemm_bias_act(const T*          A,
                                                             const WeightType* B,
-                                                            const T*          weight_scales,
+                                                            const float*          weight_scales,
                                                             const T*          biases,
                                                             T*                C,
                                                             int               m,
@@ -504,7 +519,7 @@ void CutlassFpAIntBGemmRunner<T, WeightType>::gemm_bias_act(const T*          A,
                                                             char*             workspace_ptr,
                                                             const size_t      workspace_bytes,
                                                             cudaStream_t      stream){
-    VLOG(3)<<__PRETTY_FUNCTION__;
+    // std::cout<<__PRETTY_FUNCTION__<<std::endl;
     if(activation_type=="gelu"){
         run_gemm<EpilogueOpBiasFtGelu>(
             A, B, weight_scales, biases, C, m, n, k, workspace_ptr, workspace_bytes, stream);
@@ -516,7 +531,7 @@ void CutlassFpAIntBGemmRunner<T, WeightType>::gemm_bias_act(const T*          A,
     run_gemm<EpilogueOpBias>(A, B, weight_scales, biases, C, m, n, k, workspace_ptr, workspace_bytes, stream);
     }
     else{
-        PADDLE_THROW(paddle::platform::errors::InvalidArgument("Invalid activation type."));
+        throw std::runtime_error(("Invalid activation type."));
     }
 
 }
@@ -524,7 +539,7 @@ void CutlassFpAIntBGemmRunner<T, WeightType>::gemm_bias_act(const T*          A,
 template<typename T, typename WeightType>
 void CutlassFpAIntBGemmRunner<T, WeightType>::gemm(const T*          A,
                                                    const WeightType* B,
-                                                   const T*          weight_scales,
+                                                   const float*          weight_scales,
                                                    T*                C,
                                                    int               m,
                                                    int               n,
@@ -533,13 +548,14 @@ void CutlassFpAIntBGemmRunner<T, WeightType>::gemm(const T*          A,
                                                    const size_t      workspace_bytes,
                                                    cudaStream_t      stream)
 {
-    VLOG(3)<<__PRETTY_FUNCTION__;    run_gemm<EpilogueOpNoBias>(A, B, weight_scales, nullptr, C, m, n, k, workspace_ptr, workspace_bytes, stream);
+    // std::cout<<__PRETTY_FUNCTION__<<std::endl;    
+    run_gemm<EpilogueOpNoBias>(A, B, weight_scales, nullptr, C, m, n, k, workspace_ptr, workspace_bytes, stream);
 }
 
 template<typename T, typename WeightType>
 int CutlassFpAIntBGemmRunner<T, WeightType>::getWorkspaceSize(const int m, const int n, const int k)
 {
-    VLOG(3)<<__PRETTY_FUNCTION__;    // These are the min tile sizes for each config, which would launch the maximum number of blocks
+    // std::cout<<__PRETTY_FUNCTION__<<std::endl;    // These are the min tile sizes for each config, which would launch the maximum number of blocks
     const int max_grid_m = (m + 31) / 32;
     const int max_grid_n = (n + 127) / 128;
     // We need 4 bytes per block in the worst case. We launch split_k_limit in z dim.
@@ -561,8 +577,8 @@ void CutlassFpAIntBGemmRunner<float, WeightType>::gemm_bias_act(const float*    
                                                                 const size_t      workspace_bytes,
                                                                 cudaStream_t      stream)
 {
-    VLOG(3)<<__PRETTY_FUNCTION__;    
-    PADDLE_THROW(paddle::platform::errors::InvalidArgument("Attempting to run mixed gemm bias act when the types are the same is an error."));
+    // std::cout<<__PRETTY_FUNCTION__<<std::endl;    
+    throw std::runtime_error(("Attempting to run mixed gemm bias act when the types are the same is an error."));
 }
 
 template<typename WeightType>
@@ -577,14 +593,15 @@ void CutlassFpAIntBGemmRunner<float, WeightType>::gemm(const float*      A,
                                                        const size_t      workspace_bytes,
                                                        cudaStream_t      stream)
 {
-    VLOG(3)<<__PRETTY_FUNCTION__;    
-    PADDLE_THROW(paddle::platform::errors::InvalidArgument("Attempting to run mixed gemm when the types are the same is an error."));
+    // std::cout<<__PRETTY_FUNCTION__<<std::endl;    
+    throw std::runtime_error(("Attempting to run mixed gemm when the types are the same is an error."));
 }
 
 template<typename WeightType>
 int CutlassFpAIntBGemmRunner<float, WeightType>::getWorkspaceSize(const int m, const int n, const int k)
 {
-    VLOG(3)<<__PRETTY_FUNCTION__;    return 0;
+    // std::cout<<__PRETTY_FUNCTION__<<std::endl;    
+    return 0;
 }
-
-}  // namespace fastertransformer
+}  // namespace operators
+}  // namespace paddle
