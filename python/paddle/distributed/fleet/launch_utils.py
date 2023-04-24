@@ -572,7 +572,7 @@ def start_local_trainers(
         ):
             coverage_args = ["-m", "coverage", "run", "--branch", "-p"]
         cmd = (
-            [sys.executable, "-u"]
+            [sys.executable]
             + coverage_args
             + [training_script]
             + training_script_args

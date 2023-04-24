@@ -674,5 +674,4 @@ PD_REGISTER_KERNEL(top_p_sampling,
                    ALL_LAYOUT,
                    phi::TopPSamplingKernel,
                    float,
-                   phi::dtype::float16,
-                   phi::dtype::bfloat16) {}
+                   phi::dtype::float16) {}

@@ -75,6 +75,14 @@ if(WITH_GPU AND TENSORRT_FOUND)
   set(inference_deps ${inference_deps} tensorrt_engine tensorrt_converter)
 endif()
 
+if(WITH_FASTDEPLOY_MODEL)
+  set(inference_deps ${inference_deps} ${FASTDEPLOY_WENXIN_LIB})
+endif()
+
+if(WITH_FASTDEPLOY_AUTH)
+  set(inference_deps ${inference_deps} ${FASTDEPLOY_AUTH_LIB})
+endif()
+
 if(WITH_ONNXRUNTIME)
   cc_library(
     analysis_predictor
