@@ -1,9 +1,23 @@
+/* Copyright (c) 2023 PaddlePaddle Authors. All Rights Reserved.
+ * Copyright (c) 2011-2021, NVIDIA CORPORATION.  All rights reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License. */
+
 #pragma once
 
 #include "paddle/fluid/operators/fused/cutlass/cutlass_extensions/gemm/threadblock/default_dq_mma_multistage.h"
 #include "paddle/fluid/operators/fused/cutlass/cutlass_extensions/gemm/threadblock/default_dq_mma_pipelined.h"
 #include "paddle/fluid/operators/fused/cutlass/cutlass_extensions/gemm/threadblock/default_mma_bf16.h"
-
 
 namespace cutlass {
 namespace gemm {
@@ -11,8 +25,9 @@ namespace threadblock {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-/// Specialization for row-major output (OperatorClass TensorOp), fp16 activation & int8 weight
-template<
+/// Specialization for row-major output (OperatorClass TensorOp), fp16
+/// activation & int8 weight
+template <
     /// Layout type for A matrix operand
     typename LayoutA,
     /// Access granularity of A matrix in units of elements
@@ -48,46 +63,46 @@ struct DefaultMma<cutlass::half_t,
                   InstructionShape,
                   2,
                   Operator> {
+ private:
+  static constexpr int kAlignmentScale = 128 / sizeof_bits<float>::value;
 
-private:
-    static constexpr int kAlignmentScale = 128 / sizeof_bits<float>::value;
+  using Mma = DqMma<half_t,
+                    LayoutA,
+                    kAlignmentA,
+                    uint8_t,
+                    LayoutB,
+                    kAlignmentB,
+                    float,
+                    layout::RowMajor,
+                    kAlignmentScale,
+                    ElementAccumulator,
+                    layout::RowMajor,
+                    arch::OpClassTensorOp,
+                    ArchTag,
+                    ThreadblockShape,
+                    WarpShape,
+                    InstructionShape,
+                    2,
+                    Operator>;
 
-    using Mma = DqMma<half_t,
-                      LayoutA,
-                      kAlignmentA,
-                      uint8_t,
-                      LayoutB,
-                      kAlignmentB,
-                      float,
-                      layout::RowMajor,
-                      kAlignmentScale,
-                      ElementAccumulator,
-                      layout::RowMajor,
-                      arch::OpClassTensorOp,
-                      ArchTag,
-                      ThreadblockShape,
-                      WarpShape,
-                      InstructionShape,
-                      2,
-                      Operator>;
+ public:
+  // Define the MmaCore components
+  using MmaCore = typename Mma::MmaCore;
 
-public:
-    // Define the MmaCore components
-    using MmaCore = typename Mma::MmaCore;
+  // Define iterators over tiles from the A operand
+  using IteratorA = typename Mma::IteratorA;
 
-    // Define iterators over tiles from the A operand
-    using IteratorA = typename Mma::IteratorA;
+  // Define iterators over tiles from the B operand
+  using IteratorB = typename Mma::IteratorB;
 
-    // Define iterators over tiles from the B operand
-    using IteratorB = typename Mma::IteratorB;
-
-    // Define the threadblock-scoped pipelined matrix multiply
-    using ThreadblockMma = typename Mma::ThreadblockMma;
+  // Define the threadblock-scoped pipelined matrix multiply
+  using ThreadblockMma = typename Mma::ThreadblockMma;
 };
 
 ////////////////////////////////////////////////////////////////////////////////
-/// Specialization for row-major output (OperatorClass TensorOp), fp16 activation & int4 weight
-template<
+/// Specialization for row-major output (OperatorClass TensorOp), fp16
+/// activation & int4 weight
+template <
     /// Layout type for A matrix operand
     typename LayoutA,
     /// Access granularity of A matrix in units of elements
@@ -123,44 +138,43 @@ struct DefaultMma<cutlass::half_t,
                   InstructionShape,
                   2,
                   Operator> {
+ private:
+  static constexpr int kAlignmentScale = 128 / sizeof_bits<float>::value;
 
-private:
-    static constexpr int kAlignmentScale = 128 / sizeof_bits<float>::value;
+  using Mma = DqMma<half_t,
+                    LayoutA,
+                    kAlignmentA,
+                    uint4b_t,
+                    LayoutB,
+                    kAlignmentB,
+                    float,
+                    layout::RowMajor,
+                    kAlignmentScale,
+                    ElementAccumulator,
+                    layout::RowMajor,
+                    arch::OpClassTensorOp,
+                    ArchTag,
+                    ThreadblockShape,
+                    WarpShape,
+                    InstructionShape,
+                    2,
+                    Operator>;
 
-    using Mma = DqMma<half_t,
-                      LayoutA,
-                      kAlignmentA,
-                      uint4b_t,
-                      LayoutB,
-                      kAlignmentB,
-                      float,
-                      layout::RowMajor,
-                      kAlignmentScale,
-                      ElementAccumulator,
-                      layout::RowMajor,
-                      arch::OpClassTensorOp,
-                      ArchTag,
-                      ThreadblockShape,
-                      WarpShape,
-                      InstructionShape,
-                      2,
-                      Operator>;
+ public:
+  // Define the MmaCore components
+  using MmaCore = typename Mma::MmaCore;
 
-public:
-    // Define the MmaCore components
-    using MmaCore = typename Mma::MmaCore;
+  // Define iterators over tiles from the A operand
+  using IteratorA = typename Mma::IteratorA;
 
-    // Define iterators over tiles from the A operand
-    using IteratorA = typename Mma::IteratorA;
+  // Define iterators over tiles from the B operand
+  using IteratorB = typename Mma::IteratorB;
 
-    // Define iterators over tiles from the B operand
-    using IteratorB = typename Mma::IteratorB;
-
-    // Define the threadblock-scoped pipelined matrix multiply
-    using ThreadblockMma = typename Mma::ThreadblockMma;
+  // Define the threadblock-scoped pipelined matrix multiply
+  using ThreadblockMma = typename Mma::ThreadblockMma;
 };
 
-template<
+template <
     /// Layout type for A matrix operand
     typename LayoutA,
     /// Access granularity of A matrix in units of elements
@@ -202,47 +216,47 @@ struct DefaultMma<cutlass::half_t,
                   Operator,
                   false,
                   SharedMemoryClear> {
+ private:
+  static constexpr int kAlignmentScale = 128 / sizeof_bits<float>::value;
 
-private:
-    static constexpr int kAlignmentScale = 128 / sizeof_bits<float>::value;
+  using Mma = DqMma<half_t,
+                    LayoutA,
+                    kAlignmentA,
+                    uint8_t,
+                    LayoutB,
+                    kAlignmentB,
+                    float,
+                    layout::RowMajor,
+                    kAlignmentScale,
+                    ElementAccumulator,
+                    layout::RowMajor,
+                    arch::OpClassTensorOp,
+                    ArchTag,
+                    ThreadblockShape,
+                    WarpShape,
+                    InstructionShape,
+                    kStages,
+                    Operator,
+                    SharedMemoryClear>;
 
-    using Mma = DqMma<half_t,
-                      LayoutA,
-                      kAlignmentA,
-                      uint8_t,
-                      LayoutB,
-                      kAlignmentB,
-                      float,
-                      layout::RowMajor,
-                      kAlignmentScale,
-                      ElementAccumulator,
-                      layout::RowMajor,
-                      arch::OpClassTensorOp,
-                      ArchTag,
-                      ThreadblockShape,
-                      WarpShape,
-                      InstructionShape,
-                      kStages,
-                      Operator,
-                      SharedMemoryClear>;
+ public:
+  // Define the MmaCore components
+  using MmaCore = typename Mma::MmaCore;
 
-public:
-    // Define the MmaCore components
-    using MmaCore = typename Mma::MmaCore;
+  // Define iterators over tiles from the A operand
+  using IteratorA = typename Mma::IteratorA;
 
-    // Define iterators over tiles from the A operand
-    using IteratorA = typename Mma::IteratorA;
+  // Define iterators over tiles from the B operand
+  using IteratorB = typename Mma::IteratorB;
 
-    // Define iterators over tiles from the B operand
-    using IteratorB = typename Mma::IteratorB;
-
-    // Define the threadblock-scoped pipelined matrix multiply
-    using ThreadblockMma = typename Mma::ThreadblockMma;
+  // Define the threadblock-scoped pipelined matrix multiply
+  using ThreadblockMma = typename Mma::ThreadblockMma;
 };
 
 ////////////////////////////////////////////////////////////////////////////////
-/// Specialization for row-major output (OperatorClass TensorOp), fp16 activation & int4 weight
-template<
+/// Specialization for row-major output (OperatorClass TensorOp), fp16
+/// activation & int4 weight
+template <
     /// Layout type for A matrix operand
     typename LayoutA,
     /// Access granularity of A matrix in units of elements
@@ -284,47 +298,47 @@ struct DefaultMma<cutlass::half_t,
                   Operator,
                   false,
                   SharedMemoryClear> {
+ private:
+  static constexpr int kAlignmentScale = 128 / sizeof_bits<float>::value;
 
-private:
-    static constexpr int kAlignmentScale = 128 / sizeof_bits<float>::value;
+  using Mma = DqMma<half_t,
+                    LayoutA,
+                    kAlignmentA,
+                    uint4b_t,
+                    LayoutB,
+                    kAlignmentB,
+                    float,
+                    layout::RowMajor,
+                    kAlignmentScale,
+                    ElementAccumulator,
+                    layout::RowMajor,
+                    arch::OpClassTensorOp,
+                    ArchTag,
+                    ThreadblockShape,
+                    WarpShape,
+                    InstructionShape,
+                    kStages,
+                    Operator,
+                    SharedMemoryClear>;
 
-    using Mma = DqMma<half_t,
-                      LayoutA,
-                      kAlignmentA,
-                      uint4b_t,
-                      LayoutB,
-                      kAlignmentB,
-                      float,
-                      layout::RowMajor,
-                      kAlignmentScale,
-                      ElementAccumulator,
-                      layout::RowMajor,
-                      arch::OpClassTensorOp,
-                      ArchTag,
-                      ThreadblockShape,
-                      WarpShape,
-                      InstructionShape,
-                      kStages,
-                      Operator,
-                      SharedMemoryClear>;
+ public:
+  // Define the MmaCore components
+  using MmaCore = typename Mma::MmaCore;
 
-public:
-    // Define the MmaCore components
-    using MmaCore = typename Mma::MmaCore;
+  // Define iterators over tiles from the A operand
+  using IteratorA = typename Mma::IteratorA;
 
-    // Define iterators over tiles from the A operand
-    using IteratorA = typename Mma::IteratorA;
+  // Define iterators over tiles from the B operand
+  using IteratorB = typename Mma::IteratorB;
 
-    // Define iterators over tiles from the B operand
-    using IteratorB = typename Mma::IteratorB;
-
-    // Define the threadblock-scoped pipelined matrix multiply
-    using ThreadblockMma = typename Mma::ThreadblockMma;
+  // Define the threadblock-scoped pipelined matrix multiply
+  using ThreadblockMma = typename Mma::ThreadblockMma;
 };
 
-// fp16 x fp16 specialization on Ampere to use mma multistage for 2 stage. Helps avoid reg spills on
-// large tile when not enough shared mem is present to do 3+ stage
-template<
+// fp16 x fp16 specialization on Ampere to use mma multistage for 2 stage. Helps
+// avoid reg spills on large tile when not enough shared mem is present to do 3+
+// stage
+template <
     /// Layout type for A matrix operand
     typename LayoutA,
     /// Access granularity of A matrix in units of elements
@@ -368,58 +382,61 @@ struct DefaultMma<half_t,
                   SharedMemoryClear,
                   GatherA,
                   GatherB> {
+  // Define the MmaCore components
+  // 3 is used on purpose here to trigger components for mma multistage
+  using MmaCore =
+      typename cutlass::gemm::threadblock::DefaultMmaCore<ThreadblockShape,
+                                                          WarpShape,
+                                                          InstructionShape,
+                                                          half_t,
+                                                          LayoutA,
+                                                          half_t,
+                                                          LayoutB,
+                                                          ElementAccumulator,
+                                                          layout::RowMajor,
+                                                          arch::OpClassTensorOp,
+                                                          3,
+                                                          Operator>;
 
-    // Define the MmaCore components
-    // 3 is used on purpose here to trigger components for mma multistage
-    using MmaCore = typename cutlass::gemm::threadblock::DefaultMmaCore<ThreadblockShape,
-                                                                        WarpShape,
-                                                                        InstructionShape,
-                                                                        half_t,
-                                                                        LayoutA,
-                                                                        half_t,
-                                                                        LayoutB,
-                                                                        ElementAccumulator,
-                                                                        layout::RowMajor,
-                                                                        arch::OpClassTensorOp,
-                                                                        3,
-                                                                        Operator>;
+  // Define iterators over tiles from the A operand
+  using ThreadMapA = typename MmaCore::IteratorThreadMapA;
+  using AccessTypeA = cutlass::Array<half_t, kAlignmentA>;
+  using IteratorA =
+      cutlass::transform::threadblock::PredicatedTileAccessIterator<
+          cutlass::MatrixShape<ThreadblockShape::kM, ThreadblockShape::kK>,
+          half_t,
+          LayoutA,
+          1,
+          ThreadMapA,
+          AccessTypeA,
+          GatherA>;
 
-    // Define iterators over tiles from the A operand
-    using ThreadMapA  = typename MmaCore::IteratorThreadMapA;
-    using AccessTypeA = cutlass::Array<half_t, kAlignmentA>;
-    using IteratorA   = cutlass::transform::threadblock::PredicatedTileAccessIterator<
-        cutlass::MatrixShape<ThreadblockShape::kM, ThreadblockShape::kK>,
-        half_t,
-        LayoutA,
-        1,
-        ThreadMapA,
-        AccessTypeA,
-        GatherA>;
+  // Define iterators over tiles from the B operand
+  using ThreadMapB = typename MmaCore::IteratorThreadMapB;
+  using AccessTypeB = cutlass::Array<half_t, kAlignmentB>;
+  using IteratorB =
+      cutlass::transform::threadblock::PredicatedTileAccessIterator<
+          cutlass::MatrixShape<ThreadblockShape::kK, ThreadblockShape::kN>,
+          half_t,
+          LayoutB,
+          0,
+          ThreadMapB,
+          AccessTypeB,
+          GatherB>;
 
-    // Define iterators over tiles from the B operand
-    using ThreadMapB  = typename MmaCore::IteratorThreadMapB;
-    using AccessTypeB = cutlass::Array<half_t, kAlignmentB>;
-    using IteratorB   = cutlass::transform::threadblock::PredicatedTileAccessIterator<
-        cutlass::MatrixShape<ThreadblockShape::kK, ThreadblockShape::kN>,
-        half_t,
-        LayoutB,
-        0,
-        ThreadMapB,
-        AccessTypeB,
-        GatherB>;
-
-    // Define the threadblock-scoped multistage matrix multiply
-    using ThreadblockMma = cutlass::gemm::threadblock::MmaMultistage<typename MmaCore::Shape,
-                                                                     IteratorA,
-                                                                     typename MmaCore::SmemIteratorA,
-                                                                     MmaCore::kCacheOpA,
-                                                                     IteratorB,
-                                                                     typename MmaCore::SmemIteratorB,
-                                                                     MmaCore::kCacheOpB,
-                                                                     ElementAccumulator,
-                                                                     layout::RowMajor,
-                                                                     typename MmaCore::MmaPolicy,
-                                                                     2>;
+  // Define the threadblock-scoped multistage matrix multiply
+  using ThreadblockMma =
+      cutlass::gemm::threadblock::MmaMultistage<typename MmaCore::Shape,
+                                                IteratorA,
+                                                typename MmaCore::SmemIteratorA,
+                                                MmaCore::kCacheOpA,
+                                                IteratorB,
+                                                typename MmaCore::SmemIteratorB,
+                                                MmaCore::kCacheOpB,
+                                                ElementAccumulator,
+                                                layout::RowMajor,
+                                                typename MmaCore::MmaPolicy,
+                                                2>;
 };
 
 }  // namespace threadblock
