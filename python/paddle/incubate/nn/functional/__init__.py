@@ -22,6 +22,7 @@ from .cutlass_fused_multi_head_attention import (
     cutlass_fused_multi_head_attention, mem_efficient_attention_variable,
 )
 from .fused_dropout_add import fused_dropout_add
+from .rms_norm import rms_norm
 
 
 __all__ = [
