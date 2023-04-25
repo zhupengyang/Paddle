@@ -41,6 +41,33 @@ void print_tensor(const T *t, int size, const char *name){
   out_txt_file.close();
 }
 
+template <typename T>
+struct BaseActivationFunctor {
+  using ELEMENT_TYPE = T;
+
+  using AttrPair = std::vector<std::pair<const char*, float*>>;
+
+  AttrPair GetAttrs() { return AttrPair(); }
+};
+
+template <typename T>
+struct CudaSwishFunctor : public BaseActivationFunctor<T> {
+  using MPType = typename phi::dtype::MPTypeTrait<T>::Type;
+  MPType one = static_cast<MPType>(1.0f);
+  float beta = 1.0;
+
+  typename BaseActivationFunctor<T>::AttrPair GetAttrs() {
+    return {{"beta", &beta}};
+  }
+
+  // swish(x) = x / (1 + exp(-beta * x))
+  __device__ __forceinline__ T operator()(const T arg_x) const {
+    MPType x = static_cast<MPType>(arg_x);
+    MPType b = static_cast<MPType>(beta);
+    return static_cast<T>(x / (one + exp(-b * x)));
+  }
+};
+
 // for debug
 // #define _DEBUG_FUSED_MULTI_TRANSFORMER
 
@@ -1467,6 +1494,44 @@ __global__ void ActFFNGlu(const T *input,
   }
 }
 
+template <typename T, typename Functor>
+void LaunchActFFNGlu(const phi::GPUContext &dev_ctx,
+                     const T *input,
+                     T *output,
+                     const int token_num,
+                     const int hid_dim) {
+  constexpr int VecSize = 16;
+  constexpr int PackSize = VecSize / sizeof(T);
+  const int elem_cnt = token_num * hid_dim;
+  const int blocksize = 128;
+  int grid_size = 1;
+  Functor functor;
+  switch (hid_dim % PackSize) {
+    case 0:
+      GetNumBlocks(elem_cnt / PackSize, &grid_size);
+      ActFFNGlu<T, Functor, PackSize>
+          <<<grid_size, blocksize, 0, dev_ctx.stream()>>>(
+              input,
+              output,
+              functor,
+              token_num,
+              hid_dim,
+              elem_cnt);
+      break;
+    default:
+      GetNumBlocks(elem_cnt, &grid_size);
+      ActFFNGlu<T, Functor, 1>
+          <<<grid_size, blocksize, 0, dev_ctx.stream()>>>(
+              input,
+              output,
+              functor,
+              token_num,
+              hid_dim,
+              elem_cnt);
+      break;
+    }
+}
+
 template <typename T>
 class FFNGluHelper {
  public:
@@ -1496,37 +1561,18 @@ class FFNGluHelper {
         dev_ctx_, false, false, token_num_, dim_ffn_, dim_embed_, true);
     ffn_linear_compute.ComputeForward(weight, input, bias, bias_out, bias_out);
 
-    using Functor = GeluFunctor<T>;
-
-    Functor functor;
-    constexpr int VecSize = 16;
-    constexpr int PackSize = VecSize / sizeof(T);
-    const int elem_cnt = token_num_ * hid_dim_;
-    const int blocksize = 128;
-    int grid_size = 1;
-    switch (hid_dim_ % PackSize) {
-      case 0:
-        GetNumBlocks(elem_cnt / PackSize, &grid_size);
-        ActFFNGlu<T, Functor, PackSize>
-            <<<grid_size, blocksize, 0, dev_ctx_.stream()>>>(
-                bias_out->data<T>(),
-                output->data<T>(),
-                functor,
-                token_num_,
-                hid_dim_,
-                elem_cnt);
-        break;
-      default:
-        GetNumBlocks(elem_cnt, &grid_size);
-        ActFFNGlu<T, Functor, 1>
-            <<<grid_size, blocksize, 0, dev_ctx_.stream()>>>(
-                bias_out->data<T>(),
-                output->data<T>(),
-                functor,
-                token_num_,
-                hid_dim_,
-                elem_cnt);
-        break;
+    if (act_method_ == "geglu") {
+      LaunchActFFNGlu<T, GeluFunctor<T>>(dev_ctx_,
+                                         bias_out->data<T>(),
+                                         output->data<T>(),
+                                         token_num_,
+                                         hid_dim_);
+    } else if (act_method_ == "swiglu") {
+      LaunchActFFNGlu<T, CudaSwishFunctor<T>>(dev_ctx_,
+                                              bias_out->data<T>(),
+                                              output->data<T>(),
+                                              token_num_,
+                                              hid_dim_);
     }
   }
 

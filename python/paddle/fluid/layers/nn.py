@@ -711,6 +711,7 @@ def unsqueeze(input, axes, name=None):
             input,
             'input',
             [
+                'uint16',
                 'float16',
                 'float32',
                 'float64',

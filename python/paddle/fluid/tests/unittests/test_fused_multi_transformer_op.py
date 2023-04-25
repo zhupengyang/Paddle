@@ -83,7 +83,7 @@ class TestFusedMultiTransformerOp(OpTest):
             bias_attr=self.bias_attr,
         )
 
-        if self.use_geglu:
+        if self.use_glu:
             self.ffn1_proj = Linear(
                 self.embed_dim,
                 8 * self.embed_dim,
@@ -118,6 +118,8 @@ class TestFusedMultiTransformerOp(OpTest):
         self.dropout = Dropout(self.dropout_prob, mode="upscale_in_train")
         if self.act_method == "geglu":
             self.activation = F.gelu
+        elif self.act_method == "swiglu":
+            self.activation = F.swish
         else:
             self.activation = getattr(F, self.act_method)
 
@@ -141,7 +143,7 @@ class TestFusedMultiTransformerOp(OpTest):
         self.has_pre_cache = False
         self.rotary_embs = None
         self.rotary_emb_dims = 0
-        self.use_geglu = False
+        self.use_glu = False
 
         self.remove_padding = False
 
@@ -436,7 +438,7 @@ class TestFusedMultiTransformerOp(OpTest):
             if self.pre_layer_norm:
                 ffn_ln_out = self.ffn_norm(attn_out)
 
-            if self.use_geglu:
+            if self.use_glu:
                 h0, h1 = self.ffn1_proj(ffn_ln_out).chunk(2, axis=-1)
                 ffn1_out = self.dropout(self.activation(h0) * h1)
             else:
@@ -573,7 +575,7 @@ class TestFusedMultiTransformerOp(OpTest):
                 if self.pre_layer_norm:
                     ffn_ln_out = self.ffn_norm(attn_out)
 
-                if self.use_geglu:
+                if self.use_glu:
                     h0, h1 = self.ffn1_proj(ffn_ln_out).chunk(2, axis=-1)
                     ffn1_out = self.dropout(self.activation(h0) * h1)
                 else:
@@ -1163,7 +1165,7 @@ class TestFusedMultiTransformerOpRotaryFP16GeGlu(TestFusedMultiTransformerOp):
         self.x_type = np.float16
         self.rotary_emb_dims = 1
         self.act_method = "geglu"
-        self.use_geglu = True
+        self.use_glu = True
 
 
 class TestFusedMultiTransformerOpGenRotaryFP16(TestFusedMultiTransformerOp):
@@ -1195,7 +1197,25 @@ class TestFusedMultiTransformerOpGenRotaryFP16GeGlu(
         )
         self.rotary_emb_dims = 2
         self.act_method = "geglu"
-        self.use_geglu = True
+        self.use_glu = True
+
+
+class TestFusedMultiTransformerOpGenRotaryFP16SwiGlu(
+    TestFusedMultiTransformerOp
+):
+    def config(self):
+        super().config()
+        self.x_type = np.float16
+        self.has_cache_kv = True
+        self.gen_cache_kv = False
+        self.query_length = 1
+        self.key_length, self.value_length = (
+            self.query_length,
+            self.query_length,
+        )
+        self.rotary_emb_dims = 2
+        self.act_method = "swiglu"
+        self.use_glu = True
 
 
 class TestFusedMultiTransformerOpGenCacheRotaryFP16(
@@ -1230,7 +1250,17 @@ class TestFusedMultiTransformerOpActReluFp16ReGlu(TestFusedMultiTransformerOp):
         self.x_type = np.float16
         self.layers = 3  # odd layers
         self.act_method = "geglu"
-        self.use_geglu = True
+        self.use_glu = True
+
+
+class TestFusedMultiTransformerOpActReluFp16SwiGlu(TestFusedMultiTransformerOp):
+    def config(self):
+        super().config()
+        self.x_type = np.float16
+        self.layers = 3  # odd layers
+        self.act_method = "swiglu"
+        self.use_glu = True
+
 
 
 class TestFusedMultiTransformerOpCacheKV(TestFusedMultiTransformerOp):
