@@ -28,10 +28,32 @@ limitations under the License. */
 #include "paddle/phi/kernels/fusion/fused_softmax_mask_kernel.h"
 #include "paddle/phi/kernels/fusion/fused_multihead_attention_kernel.h"
 #include "paddle/phi/kernels/fusion/fused_multihead_attention_variable_kernel.h"
+// #include "paddle/fluid/operators/fused/fused_multi_transformer_op.cu.h"
 
 namespace paddle {
 namespace operators {
 
+template <typename T>
+void PrintMatrix2(const T* mat_d, int num, std::string name) {
+  // if (FLAGS_cublaslt_exhaustive_search_times != 114514) return;
+
+    std::vector<T> tmp(num);
+    cudaMemcpy(tmp.data(), mat_d, sizeof(T) * num, cudaMemcpyDeviceToHost);
+
+    std::ofstream outfile;
+    outfile.open(name+".txt", std::ios::out);
+    std::stringstream ss;
+
+    for (int i = 0; i < num; ++i) {
+      if(std::is_same<T, int8_t>::value) {
+        ss << static_cast<int>(tmp[i]) << std::endl;
+      } else {
+        ss << std::setprecision(8) << tmp[i] << std::endl;
+      }
+    }
+    outfile << ss.str();
+    outfile.close();
+}
 template <paddle::DataType D>
 class PDTraits;
 
@@ -541,6 +563,9 @@ class FMHARef {
                      gemm_batch_size,
                      stride_a,
                      stride_b);
+    //std::string str = "qk_out";
+    //PrintMatrix2<T>(qk_out_tensor->data<T>(), qk_out_tensor->numel(), str);
+    VLOG(0) << "qk:" << *qk_out_tensor;
     int softmax_axis = -1;
     if (src_mask_tensor != nullptr) {
       if (src_mask_out_tensor == nullptr && seq_len_ == out_seq_len) {

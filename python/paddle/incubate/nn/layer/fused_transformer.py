@@ -1331,13 +1331,13 @@ class FusedMultiTransformer(Layer):
                 dtype='float32',
             )
             ffn1_weight = self.create_parameter(
-                shape=[embed_dim, dim_feedforward],
+                shape=[embed_dim, dim_feedforward * 2] if activation.endswith("glu") else [embed_dim, dim_feedforward],
                 attr=ffn1_weight_attr,
                 dtype=self._dtype,
                 is_bias=False,
             )
             ffn1_bias = self.create_parameter(
-                shape=[dim_feedforward],
+                shape=[dim_feedforward * 2] if activation.endswith("glu") else [dim_feedforward],
                 attr=ffn1_bias_attr,
                 dtype=self._dtype,
                 is_bias=True,

@@ -980,7 +980,7 @@ def silu(x, name=None):
         return _C_ops.silu(x)
     else:
         check_variable_and_dtype(
-            x, 'x', ['float16', 'float32', 'float64'], 'silu'
+            x, 'x', ['uint16', 'float16', 'float32', 'float64'], 'silu'
         )
         helper = LayerHelper("silu", **locals())
         out = helper.create_variable_for_type_inference(x.dtype)

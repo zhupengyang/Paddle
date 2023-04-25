@@ -214,7 +214,7 @@ def Print(
     check_variable_and_dtype(
         input,
         'input',
-        ['float32', 'float64', 'int32', 'int64', 'bool'],
+        ['uint16', 'float32', 'float64', 'int32', 'int64', 'bool'],
         'fluid.layers.Print',
     )
 

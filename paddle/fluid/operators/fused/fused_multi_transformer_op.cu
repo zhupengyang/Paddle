@@ -97,6 +97,7 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
                              sequence_lengths->data<int>(),
                              bsz,
                              seq_len);
+      if (token_num == 0) return;
       padding_offset_tensor.Resize({{token_num}});
       x_remove_padding.Resize({{token_num, dim_embed}});
       dev_ctx.Alloc<T>(&x_remove_padding, x_remove_padding.numel() * sizeof(T));
@@ -108,10 +109,7 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
                           dim_embed);
     } else {
       token_num = bsz_seq;
-    }
-
-    if (token_num == 0) {
-      return;
+      if (token_num == 0) return;
     }
 
     auto *padding_offset_data =
@@ -625,6 +623,8 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
         }
         
       }
+      std::string str = "fmha_" + std::to_string(i);
+      PrintMatrix<T>(fmha_out.data<T>(), fmha_out.numel(), str);
 #ifdef _DEBUG_FUSED_MULTI_TRANSFORMER
       VLOG(0) << "step3";
       VLOG(0) << "fmha_out:" << fmha_out;
@@ -653,9 +653,6 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
           AllReduce<T>(*buf0, ring_id, buf0->numel(), dev_ctx);
         }
       }
-      // cudaDeviceSynchronize();
-      // PADDLE_THROW(paddle::platform::errors::Fatal(
-      //     "Paddle debuge throw"));
 #ifdef _DEBUG_FUSED_MULTI_TRANSFORMER
       VLOG(0) << "step4";
 #endif
