@@ -123,7 +123,7 @@ struct Masked_multihead_attention_params {
   // qkv_out, [B, 1(seq_len), 3, num_head * dim_head]
   const T *qkv;
   // bias, [3, num_head, dim_head]
-  const T *qkv_bias;
+  T *qkv_bias;
   // TODO(wangxi): optimize with input_lengths and max_input_len?
   // [bsz, 1, 1, time_step(cache_seq_length)+1]
   const T *attn_mask;
@@ -146,7 +146,9 @@ struct Masked_multihead_attention_params {
   int max_seq_length;
 
   // 1.f / sqrt(Dh)
-  float inv_sqrt_dh;
+  float inv_sqrt_dh; 
+
+  bool add_qkv_bias; 
 };
 
 #ifdef MMHA_USE_FP32_ACUM_FOR_FMA
@@ -454,8 +456,13 @@ __global__ void masked_multihead_attention_kernel(
 
   const T *q_base = params.qkv;
   const T *k_base = params.qkv + params.num_head * Dh;
-  const T *q_bias_base = params.qkv_bias;
-  const T *k_bias_base = params.qkv_bias + params.num_head * Dh;
+  T *q_bias_base = nullptr; 
+  T *k_bias_base = nullptr; 
+
+  if(params.add_qkv_bias){
+    q_bias_base = params.qkv_bias;
+    k_bias_base = params.qkv_bias + params.num_head * Dh;
+  }
 
   if (tid < QK_VECS_PER_WARP) {
     int qk_offset = qkv_base_offset + tid * QK_VEC_SIZE;
@@ -473,22 +480,25 @@ __global__ void masked_multihead_attention_kernel(
             : k;
 
     Qk_vec q_bias;
-    zero(q_bias);
-    q_bias =
+    zero(q_bias);    
+    Qk_vec k_bias;
+    zero(k_bias);
+
+    if(params.add_qkv_bias){
+      q_bias =
         (Dh == Dh_MAX || tid * QK_VEC_SIZE < Dh)
             ? *reinterpret_cast<const Qk_vec *>(&q_bias_base[qk_bias_offset])
             : q_bias;
-    Qk_vec k_bias;
-    zero(k_bias);
-    k_bias =
+      k_bias =
         (Dh == Dh_MAX || tid * QK_VEC_SIZE < Dh)
             ? *reinterpret_cast<const Qk_vec *>(&k_bias_base[qk_bias_offset])
             : k_bias;
 
-    q = add(q, q_bias);
-    // TODO(wangxi): See this https://github.com/microsoft/unilm/issues/510
-    //   we may not require k_bias.
-    k = add(k, k_bias);
+      q = add(q, q_bias);
+      // TODO(wangxi): See this https://github.com/microsoft/unilm/issues/510
+      //   we may not require k_bias.
+      k = add(k, k_bias);
+    }
 
     // rotary pos emb
     if (params.rotary_emb_dims != 0) {
@@ -516,21 +526,24 @@ __global__ void masked_multihead_attention_kernel(
               ? *reinterpret_cast<const Qk_vec *>(&k_base[qk_right_offset])
               : k_right;
 
-      Qk_vec q_right_bias;
-      zero(q_right_bias);
-      q_right_bias = (Dh == Dh_MAX || right_id * QK_VEC_SIZE < Dh)
+      if(params.add_qkv_bias){
+        Qk_vec q_right_bias;
+        zero(q_right_bias);
+        
+        Qk_vec k_right_bias;
+        zero(k_right_bias);
+
+        q_right_bias = (Dh == Dh_MAX || right_id * QK_VEC_SIZE < Dh)
                          ? *reinterpret_cast<const Qk_vec *>(
                                &q_bias_base[qk_right_bias_offset])
                          : q_right_bias;
-      Qk_vec k_right_bias;
-      zero(k_right_bias);
-      k_right_bias = (Dh == Dh_MAX || right_id * QK_VEC_SIZE < Dh)
+        k_right_bias = (Dh == Dh_MAX || right_id * QK_VEC_SIZE < Dh)
                          ? *reinterpret_cast<const Qk_vec *>(
                                &k_bias_base[qk_right_bias_offset])
                          : k_right_bias;
-
-      q_right = add(q_right, q_right_bias);
-      k_right = add(k_right, k_right_bias);
+        q_right = add(q_right, q_right_bias);
+        k_right = add(k_right, k_right_bias);
+      }
 
       Qk_vec cos_emb;
       zero(cos_emb);
@@ -748,9 +761,12 @@ __global__ void masked_multihead_attention_kernel(
   if (vo == (act_time_step % V_PER_ITER) && (Dh == Dh_MAX || vi < Dh)) {
     V_vec v = *reinterpret_cast<const V_vec *>(
         &params.qkv[2 * params.num_head * Dh + qkv_base_offset + vi]);
-    v_bias = *reinterpret_cast<const V_vec *>(
+    if(params.add_qkv_bias){
+      v_bias = *reinterpret_cast<const V_vec *>(
         &params.qkv_bias[2 * params.num_head * Dh + hi * Dh + vi]);
-    v = add(v, v_bias);
+      v = add(v, v_bias);
+    }
+    
     *reinterpret_cast<V_vec *>(&v_cache[act_time_step * Dh]) = v;
 
 #if defined(MMHA_USE_FP32_ACUM_FOR_LOGITS)
@@ -876,11 +892,16 @@ void fmha(const phi::GPUContext &dev_ctx,
           int dim_head,
           int timestep,
           int rotary_emb_dims,
-          float inv_sqrt_dh) {
+          float inv_sqrt_dh, 
+          const bool add_qkv_bias) {
   Masked_multihead_attention_params<T> params;
   params.out = out_tensor->data<T>();
   params.qkv = qkv_tensor.data<T>();
-  params.qkv_bias = qkv_bias_tensor.data<T>();
+  params.add_qkv_bias = add_qkv_bias; 
+  if(add_qkv_bias){
+    // Because we may not add qkv_bias, so here we cast to T*. Author(zhengzekang). 
+    params.qkv_bias = const_cast<T*>(qkv_bias_tensor.data<T>());
+  }
   params.attn_mask = src_mask_tensor.data<T>();
   params.cache_kv = cache_kv_tensor->data<T>();
 
@@ -941,7 +962,8 @@ void fmha(const phi::GPUContext &dev_ctx,
           int num_head,
           int dim_head,
           int timestep,
-          float inv_sqrt_dh) {
+          float inv_sqrt_dh, 
+          bool add_qkv_bias) {
   fmha<T>(dev_ctx,
           qkv_tensor,
           qkv_bias_tensor,
@@ -956,7 +978,8 @@ void fmha(const phi::GPUContext &dev_ctx,
           dim_head,
           timestep,
           0,
-          inv_sqrt_dh);
+          inv_sqrt_dh, 
+          add_qkv_bias);
 }
 
 // NOTE: simd with 16Bytes(128bit), float is 4, float16 is 8
@@ -1575,6 +1598,121 @@ class FFNGluHelper {
   int dim_ffn_;
   int dim_embed_;
 };
+
+template <typename T, typename Functor, int VecSize>
+__global__ void LeftActRightMulKernel(const T *input0,
+                                      const T *input1,
+                                      T *output,
+                                      Functor act_functor,
+                                      const int elem_num) {
+  using LoadT = phi::AlignedVector<T, VecSize>;
+  LoadT src_vec1;
+  LoadT src_vec2;
+  const int global_tid = blockIdx.x * blockDim.x + threadIdx.x;
+  for (int linear_idx = global_tid * VecSize; linear_idx < elem_num; linear_idx += gridDim.x * blockDim.x * VecSize) {
+    phi::Load<T, VecSize>(&input0[linear_idx], &src_vec1);
+    phi::Load<T, VecSize>(&input1[linear_idx], &src_vec2);
+#pragma unroll
+    for (int j = 0; j < VecSize; j++) {
+      src_vec1[j] = act_functor(src_vec1[j]);
+      src_vec1[j] *= src_vec2[j];
+    }
+    phi::Store<T, VecSize>(src_vec1, &output[linear_idx]);
+  }
+}
+
+template <typename T, typename Functor>
+void LaunchLeftActRightMulKernel(const phi::GPUContext &dev_ctx,
+                                 const T *input0,
+                                 const T *input1,
+                                 T *output,
+                                 const int elem_cnt) {
+  constexpr int VecSize = 16;
+  constexpr int PackSize = VecSize / sizeof(T);
+  const int blocksize = 128;
+  int grid_size = 1;
+  Functor functor;
+  switch (elem_cnt % PackSize) {
+    case 0:
+      GetNumBlocks(elem_cnt / PackSize, &grid_size);
+      LeftActRightMulKernel<T, Functor, PackSize>
+          <<<grid_size, blocksize, 0, dev_ctx.stream()>>>(
+              input0,
+              input1, 
+              output,
+              functor,
+              elem_cnt);
+      break;
+    default:
+      GetNumBlocks(elem_cnt, &grid_size);
+      LeftActRightMulKernel<T, Functor, 1>
+          <<<grid_size, blocksize, 0, dev_ctx.stream()>>>(
+              input0,
+              input1, 
+              output,
+              functor,
+              elem_cnt);
+      break;
+    }
+}
+
+
+template <typename T>
+class LlamaMLPHelper {
+ public:
+  LlamaMLPHelper(const phi::GPUContext &dev_ctx,
+               const std::string &act_method,
+               int token_num,
+               int dim_ffn,
+               int dim_embed)
+      : dev_ctx_(dev_ctx),
+        act_method_(act_method),
+        token_num_(token_num),
+        dim_ffn_(dim_ffn),
+        dim_embed_(dim_embed) {}
+
+  // dst = act(fc(src[0]) + bias) * src[1]
+  void Compute(const phi::DenseTensor *input,
+               const phi::DenseTensor *weight0,
+               const phi::DenseTensor *weight1,
+               phi::DenseTensor *output0, 
+               phi::DenseTensor *output1, 
+               phi::DenseTensor *result) {
+    // input's shape [token_num, dim_embed_]
+    // weight's shape [dim_embed_, dim_ffn_]
+    // output's shape [token_num, dim_ffn]
+    
+    /*
+    equals to: 
+      self.gate_proj = nn.Linear(hidden_size, intermediate_size, bias=False)
+      self.up_proj = nn.Linear(hidden_size, intermediate_size, bias=False)
+      self.act_fn(self.gate_proj(x)) * self.up_proj(x)
+    */
+    auto ffn_linear_compute = AttnMatMul<T>(
+        dev_ctx_, false, false, token_num_, dim_ffn_, dim_embed_, /*compute_bias*/false);
+    ffn_linear_compute.ComputeForward(weight0, input, nullptr, output0, output0);
+    ffn_linear_compute.ComputeForward(weight1, input, nullptr, output0, output1);
+
+    const int32_t elem_cnt = token_num_ * dim_ffn_; 
+
+    // Note(zhengzekang): Currently only support swiglu. :) 
+    LaunchLeftActRightMulKernel<T, CudaSwishFunctor<T>>(dev_ctx_,
+                                                        output0->data<T>(),
+                                                        output1->data<T>(),
+                                                        result->data<T>(),
+                                                        elem_cnt); 
+  }
+
+ private:
+  const phi::GPUContext &dev_ctx_;
+  std::string act_method_;
+  int token_num_;
+  int dim_ffn_;
+  int dim_embed_;
+};
+
+
+
 
 }  // namespace
 

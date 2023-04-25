@@ -27,4 +27,24 @@ void RmsNormKernel(const Context& dev_ctx,
                    int begin_norm_axis, 
                    DenseTensor* out);
 
+template <typename T, typename Context>
+void RmsNormWrapper(const Context& ctx,
+                    const T* x,
+                    const T* weight,
+                    const float epsilon,
+                    const int rows, 
+                    const int cols, 
+                    T* output);
+
+template <typename T, typename Context>
+void ResidualAddRmsNormWrapper(const Context& ctx,
+                               const T* x,
+                               const T* residual, 
+                               const T* weight,
+                               const float epsilon,
+                               const int rows, 
+                               const int cols, 
+                               T* residual_output, 
+                               T* output);
+
 }  // namespace phi
