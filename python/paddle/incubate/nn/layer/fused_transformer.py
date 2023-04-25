@@ -1398,11 +1398,6 @@ class FusedMultiTransformer(Layer):
             _add_parameter(ffn2_weight)
             _add_parameter(ffn2_bias)
 
-            # if self._quant_weight:
-            self.qkv_weights_scales.append(qkv_weight_scale)
-            self.linear_weights_scales.append(linear_weight_scale)
-            self.ffn1_weights_scales.append(ffn1_weight_scale)
-            self.ffn2_weights_scales.append(ffn2_weight_scale)
         self.dropout_rate = dropout_rate
         self.activation = activation
         self.name = name
