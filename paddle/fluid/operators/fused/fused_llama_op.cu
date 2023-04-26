@@ -71,8 +71,9 @@ class FusedLLAMAOpKernel : public framework::OpKernel<T> {
     int bsz_seq = bsz * seq_len;
     const std::string act_method = ctx.Attr<std::string>("act_method");
 
-    bool use_glu = (act_method == "geglu" || act_method == "swiglu");
-    bool pre_layer_norm = true; 
+    // Note(Zhengzekang): LLAMA use pre layernorm architecture. 
+    // bool pre_layer_norm = true; 
+
     bool remove_padding = false;
     auto *sequence_lengths = ctx.Input<phi::DenseTensor>("SeqLengths");
     if (sequence_lengths) {
@@ -113,6 +114,7 @@ class FusedLLAMAOpKernel : public framework::OpKernel<T> {
     } else {
       token_num = bsz_seq;
     }
+    printf("Token num is: %d \n", token_num); 
 
     if (token_num == 0) {
       return;
@@ -171,7 +173,6 @@ class FusedLLAMAOpKernel : public framework::OpKernel<T> {
     auto *src_mask = ctx.Input<phi::DenseTensor>("SrcMask");
     auto cache_kvs = ctx.MultiInput<phi::DenseTensor>("CacheKV");
     auto cache_kv_outs = ctx.MultiOutput<phi::DenseTensor>("CacheKVOut");
-    // auto *time_step = ctx.Input<phi::DenseTensor>("TimeStep");
     auto pre_caches = ctx.MultiInput<phi::DenseTensor>("PreCaches");
     int cache_offset = 0;
     if (pre_caches.size() > 0) {
@@ -278,28 +279,19 @@ class FusedLLAMAOpKernel : public framework::OpKernel<T> {
 
     uint8_t *dropout_mask_out_data = nullptr;
 
-    // 6. ffn matmul1. Since LLAMA use GLU, it need 2 matmul weights. Author(zhengzekang)
-    auto ffn1_weights0 = ctx.MultiInput<phi::DenseTensor>("FFN1Weight0");
-    auto ffn1_weight_dim = ffn1_weights0[0]->dims();
+    // 6. ffn matmul1. LLAMA use swiGLU. Author(zhengzekang)
+    auto ffn1_weights = ctx.MultiInput<phi::DenseTensor>("FFN1Weight");
+    auto ffn1_weight_dim = ffn1_weights[0]->dims();
     int dim_ffn = ffn1_weight_dim[1];
+    FFNGluHelper<T> ffn1_glu_helper(
+        dev_ctx, "swiglu", token_num, dim_ffn / 2, dim_ffn, dim_embed);
 
-    auto ffn1_weights1 = ctx.MultiInput<phi::DenseTensor>("FFN1Weight1");
+    phi::DenseTensor ffn1_out;
+    ffn1_out.Resize({{token_num, dim_ffn}});
+    auto *ffn1_out_data =
+        dev_ctx.Alloc<T>(&ffn1_out, ffn1_out.numel() * sizeof(T));
 
-    LlamaMLPHelper<T> llama_mlp_helper(
-        dev_ctx, act_method, token_num, dim_ffn, dim_embed);
-    
-    phi::DenseTensor glu_matmul0_out;
-    glu_matmul0_out.Resize({{token_num, dim_ffn}});
-    auto *glu_matmul0_out_data =
-        dev_ctx.Alloc<T>(&glu_matmul0_out, glu_matmul0_out.numel() * sizeof(T));
-
-    phi::DenseTensor glu_matmul1_out;
-    glu_matmul1_out.Resize({{token_num, dim_ffn}});
-    auto *glu_matmul1_out_data =
-        dev_ctx.Alloc<T>(&glu_matmul1_out, glu_matmul1_out.numel() * sizeof(T));
-
-    int tmp_dim_ffn = dim_ffn;
-    if (use_glu) tmp_dim_ffn /= 2;
+    int tmp_dim_ffn = dim_ffn / 2;
 
     int8_t *ffn1_dropout_mask_data = nullptr;
     phi::DenseTensor ffn1_dropout_out, ffn1_dropout_mask;
@@ -356,25 +348,21 @@ class FusedLLAMAOpKernel : public framework::OpKernel<T> {
       buf0 = &tmp_out;
       buf1 = &tmp_out_rm_padding;
     } else {
-      // if (pre_layer_norm) {
-        if (layers & 1) {
-          // odd, set buf1 as out
-          buf0 = &tmp_out;
-          buf1 = out;
-        } else {
-          // even, set buf0 as out
-          buf0 = out;
-          buf1 = &tmp_out;
-        }
-      // } else {
-      //   buf0 = &tmp_out;
-      //   buf1 = out;
-      // }
+      if (layers & 1) {
+        // odd, set buf1 as out
+        buf0 = &tmp_out;
+        buf1 = out;
+      } else {
+        // even, set buf0 as out
+        buf0 = out;
+        buf1 = &tmp_out;
+      }
     }
 
     for (int i = 0; i < layers; ++i) {
       // step1. layer_norm, LLAMA use pre_layer_norm. 
-      if (i == 0 && pre_layer_norm) {
+      if (i == 0) {
+        VLOG(2) << "step rmsnorm";
         // Here use rmsnorm, LLAMA RMSNorm weight dtype is same as input, and it do not need bias. Author(zhengzekang). 
         auto *ln_scale_data = ln_scales[i]->data<T>();
         phi::RmsNormWrapper<T, phi::GPUContext>(
@@ -392,16 +380,10 @@ class FusedLLAMAOpKernel : public framework::OpKernel<T> {
 #endif
 
       // step2. qkv
-      // const phi::DenseTensor *qkv_bias =
-      //     qkv_biases.size() > 0 ? qkv_biases[i] : nullptr;
-      // NOTE: in decoder stage, bias is fused in fmha
-      // const phi::DenseTensor *bias = time_step ? nullptr : qkv_bias;
-      
-      const phi::DenseTensor *qkv_bias = nullptr; 
-      const phi::DenseTensor* bias = nullptr;
+      const phi::DenseTensor *qkv_bias = nullptr;
       VLOG(5)<< "Doing qkv gemm, mnk:" << token_num << ", " << output_size << ", " << input_size;
       qkv_compute.ComputeForward(
-          qkv_weights[i], buf1, bias, &qkv_out, &qkv_out, true);
+          qkv_weights[i], buf1, /*bias*/nullptr, &qkv_out, &qkv_out, true);
 
 #ifdef _DEBUG_FUSED_MULTI_TRANSFORMER
       VLOG(0) << "step2";
@@ -414,11 +396,13 @@ class FusedLLAMAOpKernel : public framework::OpKernel<T> {
       phi::DenseTensor *cache_kv_out = cache_kv ? cache_kv_outs[i] : nullptr;
 
       if (time_step) {  // generation decoder stage
+        printf("====== generation decode ===== \n"); 
+
         // [2, batch_size, num_head, max_seq_len, head_size]
         int max_seq_len = cache_kv->dims()[3];
         fmha<T>(dev_ctx,
                 qkv_out,
-                *qkv_bias,
+                *qkv_bias, /*nullptr, Because LLAMA donot need bias*/
                 *src_mask,
                 sequence_lengths,
                 rotary_tensor,
@@ -433,6 +417,8 @@ class FusedLLAMAOpKernel : public framework::OpKernel<T> {
                 1. / sqrt(dim_head), 
                 false);
       } else if (cache_kv_out) {  // generation context stage
+        printf("====== generation context ===== \n"); 
+
         const phi::DenseTensor *pre_cache_kv_tensor =
             pre_caches.size() > 0 ? pre_caches[i] : nullptr;
         phi::DenseTensor *pre_cache_kv_out_tmp =
@@ -445,7 +431,7 @@ class FusedLLAMAOpKernel : public framework::OpKernel<T> {
                                         q_transpose_out_data,
                                         kv_transpose_out_data,
                                         qkv_out_data,
-                                        qkv_bias->data<T>(),
+                                        /*qkv_bias*/nullptr,
                                         padding_offset_data,
                                         token_num,
                                         bsz,
@@ -547,12 +533,13 @@ class FusedLLAMAOpKernel : public framework::OpKernel<T> {
                           max_seq_len,
                           dim_head);
       } else {  // not generation
+        printf("====== not generation ===== \n"); 
         // TODO(wangxi): can remove dropout in inference
         qkv_bias_add_transpose_split<T>(dev_ctx,
                                         q_transpose_out_data,
                                         kv_transpose_out_data,
                                         qkv_out_data,
-                                        qkv_bias->data<T>(),
+                                        /*qkv_bias*/nullptr,
                                         padding_offset_data,
                                         token_num,
                                         bsz,
@@ -640,11 +627,6 @@ class FusedLLAMAOpKernel : public framework::OpKernel<T> {
 
       // step5. ln(residual + dropout(input + bias))
       auto *ln_scale_data = ffn_ln_scales[i]->data<T>();
-      // auto *ln_bias_data = ffn_ln_biases[i]->data<U>();
-      // auto *out_linear_bias_data = out_linear_biases[i]->data<T>();
-
-      // zhengzekang RMSNORM+RESIDUAL
-      // inplace
       phi::ResidualAddRmsNormWrapper<T, phi::GPUContext>(
         dev_ctx, 
         buf1->data<T>(),
@@ -663,12 +645,11 @@ class FusedLLAMAOpKernel : public framework::OpKernel<T> {
 
       // step6. ffn matmul1
       VLOG(5)<<"Doing ffn1 gemm, mnk:"<<token_num<<", "<<dim_ffn<<", "<<dim_embed;
-      llama_mlp_helper.Compute(buf1,
-                               ffn1_weights0[i],
-                               ffn1_weights1[i],
-                               &glu_matmul0_out,
-                               &glu_matmul1_out,
-                               &ffn1_dropout_out);
+      ffn1_glu_helper.Compute(buf1,
+                              ffn1_weights[i],
+                              nullptr,
+                              &ffn1_out,
+                              &ffn1_dropout_out);
       
 #ifdef _DEBUG_FUSED_MULTI_TRANSFORMER
       VLOG(0) << "step6";
@@ -685,11 +666,7 @@ class FusedLLAMAOpKernel : public framework::OpKernel<T> {
     
 #ifdef _DEBUG_FUSED_MULTI_TRANSFORMER
       VLOG(0) << "step7";
-      if (pre_layer_norm) {
-        VLOG(0) << "ffn2_out:" << *buf1;
-      } else {
-        VLOG(0) << "ffn2_out:" << *buf0;
-      }
+      VLOG(0) << "ffn2_out:" << *buf1;
 #endif
 
       VLOG(4) << "MPAllReduce 4: " << buf1->numel();
@@ -701,92 +678,45 @@ class FusedLLAMAOpKernel : public framework::OpKernel<T> {
       
 #ifdef _DEBUG_FUSED_MULTI_TRANSFORMER
       VLOG(0) << "step8.1";
-      if (pre_layer_norm) {
-        VLOG(0) << "ffn2_out_rd:" << *buf1;
-      } else {
-        VLOG(0) << "ffn2_out_rd:" << *buf0;
-      }
+      VLOG(0) << "ffn2_out_rd:" << *buf1;
 #endif
 
       // step9. residual bias
-      if (pre_layer_norm) {
-        // TODO(wangxi): remove dropout mask in inference
-        if (i < layers - 1) {
-          auto *ln_scale_data = ln_scales[i + 1]->data<T>();
-          // ffn2_fused_dropout_helper.LayernormResidualDropoutBias(
-          //     dev_ctx,
-          //     buf1->data<T>(),
-          //     residual_out_data,
-          //     ffn2_biases[i]->data<T>(),
-          //     ln_scale_data,
-          //     ln_bias_data,
-          //     buf1->data<T>(),
-          //     dropout_mask_out_data,
-          //     buf0->data<T>(),
-          //     ln_mean_data,
-          //     ln_var_data);
-
-          phi::ResidualAddRmsNormWrapper<T, phi::GPUContext>(
-            dev_ctx, 
+      if (i < layers - 1) {
+        auto *ln_scale_data = ln_scales[i + 1]->data<T>();
+        phi::ResidualAddRmsNormWrapper<T, phi::GPUContext>(
+          dev_ctx, 
+          buf1->data<T>(),
+          residual_out_data,
+          ln_scale_data, 
+          epsilon, 
+          token_num, 
+          dim_embed, 
+          buf1->data<T>(),
+          buf0->data<T>());
+      } else {
+        ffn2_fused_dropout_helper.ResidualDropoutBias(
+            dev_ctx,
             buf1->data<T>(),
             residual_out_data,
-            ln_scale_data, 
-            epsilon, 
-            token_num, 
-            dim_embed, 
+            nullptr, 
             buf1->data<T>(),
-            buf0->data<T>());
-
-        } else {
-          ffn2_fused_dropout_helper.ResidualDropoutBias(
-              dev_ctx,
-              buf1->data<T>(),
-              residual_out_data,
-              nullptr, 
-              buf1->data<T>(),
-              dropout_mask_out_data);
-        }
-      } else {
-        // auto *ln_scale_data = ffn_ln_scales[i]->data<U>();
-        // auto *ln_bias_data = ffn_ln_biases[i]->data<U>();
-        // ffn2_fused_dropout_helper.LayernormResidualDropoutBias(
-        //     dev_ctx,
-        //     buf0->data<T>(),
-        //     buf1->data<T>(),
-        //     ffn2_biases[i]->data<T>(),
-        //     ln_scale_data,
-        //     ln_bias_data,
-        //     buf0->data<T>(),
-        //     dropout_mask_out_data,
-        //     buf1->data<T>(),
-        //     ln_mean_data,
-        //     ln_var_data);
+            dropout_mask_out_data);
       }
 #ifdef _DEBUG_FUSED_MULTI_TRANSFORMER
       VLOG(0) << "step9";
       VLOG(0) << "residual_out:" << *buf1;
 #endif
-      if (pre_layer_norm) {
-        x_data = buf1->data<T>();
-        std::swap(buf0, buf1);
-      }
+      x_data = buf1->data<T>();
+      std::swap(buf0, buf1);
     }
     if (encoder_remove_padding) {
-      if (pre_layer_norm) {
-        InvokeRebuildPadding(dev_ctx,
-                             from_data,
-                             buf0->data<T>(),
-                             padding_offset_data,
-                             token_num,
-                             dim_embed);
-      } else {
-        InvokeRebuildPadding(dev_ctx,
-                             from_data,
-                             buf1->data<T>(),
-                             padding_offset_data,
-                             token_num,
-                             dim_embed);
-      }
+      InvokeRebuildPadding(dev_ctx,
+                            from_data,
+                            buf0->data<T>(),
+                            padding_offset_data,
+                            token_num,
+                            dim_embed);
     }
   }
 };

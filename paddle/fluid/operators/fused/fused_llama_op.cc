@@ -53,8 +53,7 @@ class FusedLLAMAOp : public framework::OperatorWithKernel {
     }
 
     // ffn
-    CHECK_INPUTS(FFN1Weight0);
-    CHECK_INPUTS(FFN1Weight1);
+    CHECK_INPUTS(FFN1Weight);
     CHECK_INPUTS(FFN2Weight);
 
     CHECK_OUTPUT(Out);
@@ -182,9 +181,7 @@ class FusedLLAMAOpOpMaker
         .AsDispensable()
         .AsDuplicable();
     // Because LLAMA use GLU. 
-    AddInput("FFN1Weight0", "The linear1 first weight of FusedFeedForward op")
-        .AsDuplicable();
-    AddInput("FFN1Weight1", "The linear1 second weight of FusedFeedForward op")
+    AddInput("FFN1Weight", "The linear1 weight of FusedFeedForward op")
         .AsDuplicable();
     AddInput("FFN2Weight", "The linear2 weight of FusedFeedForward op")
         .AsDuplicable();

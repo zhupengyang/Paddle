@@ -1571,8 +1571,12 @@ class FFNGluHelper {
     // input's shape [token_num, dim_ffn], bias' shape [dim_ffn]
     // output's shape [token_num, hid_dim], bias_out's shape [token_num,
     // dim_ffn]
+    bool compute_bias = true; 
+    if(bias == nullptr){
+      compute_bias = false; 
+    }
     auto ffn_linear_compute = AttnMatMul<T>(
-        dev_ctx_, false, false, token_num_, dim_ffn_, dim_embed_, true);
+        dev_ctx_, false, false, token_num_, dim_ffn_, dim_embed_, compute_bias);
     ffn_linear_compute.ComputeForward(weight, input, bias, bias_out, bias_out);
 
     if (act_method_ == "geglu") {
