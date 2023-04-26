@@ -56,7 +56,7 @@ static void PrintMatrix(const T* mat_d, int num, std::string name) {
       if(std::is_same<T, int8_t>::value) {
         ss << static_cast<int>(tmp[i]) << std::endl;
       } else {
-        ss << std::setprecision(8) << tmp[i] << std::endl;
+        ss << std::setprecision(8) << (float)(tmp[i]) << std::endl;
       }
     }
     outfile << ss.str();

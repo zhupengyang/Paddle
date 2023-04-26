@@ -623,8 +623,6 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
         }
         
       }
-      std::string str = "fmha_" + std::to_string(i);
-      PrintMatrix<T>(fmha_out.data<T>(), fmha_out.numel(), str);
 #ifdef _DEBUG_FUSED_MULTI_TRANSFORMER
       VLOG(0) << "step3";
       VLOG(0) << "fmha_out:" << fmha_out;
@@ -846,7 +844,6 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
     }
   }
 };
-
 
 
 }  // namespace operators
