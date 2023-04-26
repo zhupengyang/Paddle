@@ -20,7 +20,7 @@ limitations under the License. */
 
 #include<algorithm>
 
-#define _DEBUG_FUSED_MULTI_TRANSFORMER
+// #define _DEBUG_FUSED_MULTI_TRANSFORMER
 // #define _DEBUG_FUSED_MULTI_TRANSFORMER_PRINT_TENSOR
 DECLARE_bool(use_cutlass_fmha); 
 DECLARE_int64(custom_allreduce_one_shot_threshold);
@@ -326,9 +326,17 @@ class FusedMultiTransformerDyquantOpKernel : public framework::OpKernel<T> {
     auto ffn_mixgemm_max_size=std::max(dim_ffn, dim_embed);
     auto mixgemm_max_size = std::max(qkv_mixgemm_max_size,ffn_mixgemm_max_size);
     long mixgemm_workspace_size_bytes = mixed_gemm_runner.getWorkspaceSize(token_num, mixgemm_max_size, mixgemm_max_size);
+    //TODO(wangbojun)
+    // long mixgemm_workspace_size_bytes = 307418392;
     char* mixgemm_workspace_data=nullptr;
     if(interleaved_weight){
-      VLOG(5)<<"mix_gemm_workspace:"<<mixgemm_workspace_size_bytes<<" token_num: "<<token_num<<" mixgemm_max_size: "<<mixgemm_max_size;
+#ifdef _DEBUG_FUSED_MULTI_TRANSFORMER
+      VLOG(0)<<"mix_gemm_workspace:"<<mixgemm_workspace_size_bytes<<" token_num: "<<token_num<<" mixgemm_max_size: "<<mixgemm_max_size;
+      VLOG(0)<<"output_size:"<<output_size
+             <<" input_size: "<<input_size
+             <<" dim_ffn: "<<dim_ffn
+             <<" dim_embed: "<<dim_embed;
+#endif
       // if using interleaved_weight, we need some workspace for cutlass gemm
       mixgemm_workspace.Resize({mixgemm_workspace_size_bytes});
       mixgemm_workspace_data = reinterpret_cast<char*>(dev_ctx.Alloc<uint8_t>(&mixgemm_workspace, mixgemm_workspace_size_bytes));

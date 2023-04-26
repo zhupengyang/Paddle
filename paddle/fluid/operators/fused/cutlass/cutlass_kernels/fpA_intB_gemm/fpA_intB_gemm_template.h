@@ -149,8 +149,14 @@ void generic_mixed_gemm_kernelLauncher(const T*          A,
 
     Gemm gemm;
     if (gemm.get_workspace_size(args) > workspace_bytes) {
+        // TODO(wangbojun), here to reset the split-k in gemm args, but no work for now
+        // to run bf16 mixgemm, we have set the split-k factor to 1
         std::cout<<"Requested split-k but workspace size insufficient. Falling back to non-split-k implementation."<<std::endl;
+        std::cout<<"need workspace sizoe of: "<<gemm.get_workspace_size(args)<<", but got "<<workspace_bytes<<std::endl;
+        std::cout<<"args.batch_stride_D:"<<args.batch_stride_D<<std::endl;
+        std::cout<<"args.batch_count:"<<args.batch_count<<std::endl;
         // If requested split-k factor will require more workspace bytes, revert to standard gemm.
+        // 
         args.batch_count = 1;
     }
 

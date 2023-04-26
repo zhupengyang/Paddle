@@ -124,7 +124,7 @@ struct GemmFpAIntB {
                   int const*                                       gather_A_indices  = nullptr,
                   int const*                                       gather_B_indices  = nullptr,
                   int const*                                       scatter_D_indices = nullptr):
-            UniversalArgumentsBase(mode, problem_size, serial_split_k_factor, batch_stride_D),
+            UniversalArgumentsBase(mode, problem_size, /*serial_split_k_factor=*/1, /*batch_stride_D=*/0),
             ref_A(ref_A),
             ref_B(ref_B),
             ref_scale(ref_scale),

@@ -157,7 +157,10 @@ static CutlassGemmConfig estimate_best_config_from_occupancies(const std::vector
     int   config_waves   = INT_MAX;
     int   current_m_tile = 0;
 
-    const int max_split_k = n >= multi_processor_count * 256 ? 1 : split_k_limit;
+    // const int max_split_k = n >= multi_processor_count * 256 ? 1 : split_k_limit;
+    //TODO(wangbojun) max_split_k will have problem in bf16 gemm
+    
+    const int max_split_k = 1;
     for (int ii = 0; ii < candidate_configs.size(); ++ii) {
         CutlassGemmConfig candidate_config = candidate_configs[ii];
         TileShape         tile_shape       = get_cta_shape_for_config(candidate_config.tile_config);
