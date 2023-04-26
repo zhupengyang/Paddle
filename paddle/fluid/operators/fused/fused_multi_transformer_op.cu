@@ -212,16 +212,18 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
     // and do not need to broadcast num_heads dimension when calculating
     // attn_mask offset in MHA
     bool mask_broadcast_num_heads = true;
-    if (src_mask->dims()[1] == 1) {
-      mask_broadcast_num_heads = true;
-    } else if (src_mask->dims()[1] == num_head) {
-      mask_broadcast_num_heads = false;
-    } else {
-      PADDLE_THROW(
-          platform::errors::InvalidArgument(
-            "Unknow dimension for attn_mask, the num_head(2nd) "
-            "dimension is invalid, it should be 1 or num_head(%d), "
-            "but got %d", num_head, src_mask->dims()[1]));
+    if (src_mask) {
+      if (src_mask->dims()[1] == 1) {
+        mask_broadcast_num_heads = true;
+      } else if (src_mask->dims()[1] == num_head) {
+        mask_broadcast_num_heads = false;
+      } else {
+        PADDLE_THROW(
+            platform::errors::InvalidArgument(
+              "Unknow dimension for attn_mask, the num_head(2nd) "
+              "dimension is invalid, it should be 1 or num_head(%d), "
+              "but got %d", num_head, src_mask->dims()[1]));
+      }
     }
 
     phi::DenseTensor q_transpose_out, kv_transpose_out, qk_out;
