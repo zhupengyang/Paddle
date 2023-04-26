@@ -42,6 +42,28 @@ void print_tensor(const T *t, int size, const char *name){
 }
 
 template <typename T>
+static void PrintMatrix(const T* mat_d, int num, std::string name) {
+  // if (FLAGS_cublaslt_exhaustive_search_times != 114514) return;
+
+    std::vector<T> tmp(num);
+    cudaMemcpy(tmp.data(), mat_d, sizeof(T) * num, cudaMemcpyDeviceToHost);
+
+    std::ofstream outfile;
+    outfile.open(name+".txt", std::ios::out);
+    std::stringstream ss;
+
+    for (int i = 0; i < num; ++i) {
+      if(std::is_same<T, int8_t>::value) {
+        ss << static_cast<int>(tmp[i]) << std::endl;
+      } else {
+        ss << std::setprecision(8) << (float)(tmp[i]) << std::endl;
+      }
+    }
+    outfile << ss.str();
+    outfile.close();
+}
+
+template <typename T>
 struct BaseActivationFunctor {
   using ELEMENT_TYPE = T;
 
@@ -139,7 +161,7 @@ struct Masked_multihead_attention_params {
 
   const int *sequence_lengths{nullptr};
 
-  // The RoPE embedding, [B, 1, 1, dim_head]
+  // The RoPE embedding, [2, B, 1, 1, dim_head]
   // rotary_emb_dims = 1 if pos_ids_extra is null else 2
   const T *rotary_emb;
   int rotary_emb_dims;
@@ -494,66 +516,83 @@ __global__ void masked_multihead_attention_kernel(
     //   we may not require k_bias.
     k = add(k, k_bias);
 
-    // rotary pos emb
     if (params.rotary_emb_dims != 0) {
-      int last_dim = Dh / params.rotary_emb_dims;
-      int half_lastdim = last_dim / 2;
       int rotary_offset = bi * Dh + tid * QK_VEC_SIZE;
       const T *cos_base = params.rotary_emb;
       const T *sin_base = params.rotary_emb + params.batch_size * Dh;
-      int stride = half_lastdim / QK_VEC_SIZE;
-      int stride_all_lastdim = 2 * stride;
-      int right_id = tid / stride_all_lastdim * stride_all_lastdim +
-                     (tid + stride) % (stride_all_lastdim);
-      int qk_right_offset = qkv_base_offset + right_id * QK_VEC_SIZE;
-      int qk_right_bias_offset = hi * Dh + right_id * QK_VEC_SIZE;
-      Qk_vec q_right;
-      zero(q_right);
-      q_right =
-          (Dh == Dh_MAX || right_id * QK_VEC_SIZE < Dh)
-              ? *reinterpret_cast<const Qk_vec *>(&q_base[qk_right_offset])
-              : q_right;
-      Qk_vec k_right;
-      zero(k_right);
-      k_right =
-          (Dh == Dh_MAX || right_id * QK_VEC_SIZE < Dh)
-              ? *reinterpret_cast<const Qk_vec *>(&k_base[qk_right_offset])
-              : k_right;
-
-      Qk_vec q_right_bias;
-      zero(q_right_bias);
-      q_right_bias = (Dh == Dh_MAX || right_id * QK_VEC_SIZE < Dh)
-                         ? *reinterpret_cast<const Qk_vec *>(
-                               &q_bias_base[qk_right_bias_offset])
-                         : q_right_bias;
-      Qk_vec k_right_bias;
-      zero(k_right_bias);
-      k_right_bias = (Dh == Dh_MAX || right_id * QK_VEC_SIZE < Dh)
-                         ? *reinterpret_cast<const Qk_vec *>(
-                               &k_bias_base[qk_right_bias_offset])
-                         : k_right_bias;
-
-      q_right = add(q_right, q_right_bias);
-      k_right = add(k_right, k_right_bias);
-
-      Qk_vec cos_emb;
+      Qk_vec cos_emb, sin_emb;
       zero(cos_emb);
+      zero(sin_emb);
       cos_emb =
           (Dh == Dh_MAX || tid * QK_VEC_SIZE < Dh)
               ? *reinterpret_cast<const Qk_vec *>(&cos_base[rotary_offset])
               : cos_emb;
-
-      Qk_vec sin_emb;
-      zero(sin_emb);
       sin_emb =
           (Dh == Dh_MAX || tid * QK_VEC_SIZE < Dh)
               ? *reinterpret_cast<const Qk_vec *>(&sin_base[rotary_offset])
               : sin_emb;
-      float alpha = (tid % stride_all_lastdim) < stride ? static_cast<float>(-1)
-                                                        : static_cast<float>(1);
-      q = apply_rotary_emb(q, q_right, cos_emb, sin_emb, alpha);
-      k = apply_rotary_emb(k, k_right, cos_emb, sin_emb, alpha);
+      apply_rotary_embedding(q, k, cos_emb, sin_emb);
     }
+    /* old rotary pos emb */ 
+    // if (params.rotary_emb_dims != 0) {
+    //   int last_dim = Dh / params.rotary_emb_dims;
+    //   int half_lastdim = last_dim / 2;
+    //   int rotary_offset = bi * Dh + tid * QK_VEC_SIZE;
+    //   const T *cos_base = params.rotary_emb;
+    //   const T *sin_base = params.rotary_emb + params.batch_size * Dh;
+    //   int stride = half_lastdim / QK_VEC_SIZE;
+    //   int stride_all_lastdim = 2 * stride;
+    //   int right_id = tid / stride_all_lastdim * stride_all_lastdim +
+    //                  (tid + stride) % (stride_all_lastdim);
+    //   int qk_right_offset = qkv_base_offset + right_id * QK_VEC_SIZE;
+    //   int qk_right_bias_offset = hi * Dh + right_id * QK_VEC_SIZE;
+    //   Qk_vec q_right;
+    //   zero(q_right);
+    //   q_right =
+    //       (Dh == Dh_MAX || right_id * QK_VEC_SIZE < Dh)
+    //           ? *reinterpret_cast<const Qk_vec *>(&q_base[qk_right_offset])
+    //           : q_right;
+    //   Qk_vec k_right;
+    //   zero(k_right);
+    //   k_right =
+    //       (Dh == Dh_MAX || right_id * QK_VEC_SIZE < Dh)
+    //           ? *reinterpret_cast<const Qk_vec *>(&k_base[qk_right_offset])
+    //           : k_right;
+
+    //   Qk_vec q_right_bias;
+    //   zero(q_right_bias);
+    //   q_right_bias = (Dh == Dh_MAX || right_id * QK_VEC_SIZE < Dh)
+    //                      ? *reinterpret_cast<const Qk_vec *>(
+    //                            &q_bias_base[qk_right_bias_offset])
+    //                      : q_right_bias;
+    //   Qk_vec k_right_bias;
+    //   zero(k_right_bias);
+    //   k_right_bias = (Dh == Dh_MAX || right_id * QK_VEC_SIZE < Dh)
+    //                      ? *reinterpret_cast<const Qk_vec *>(
+    //                            &k_bias_base[qk_right_bias_offset])
+    //                      : k_right_bias;
+
+    //   q_right = add(q_right, q_right_bias);
+    //   k_right = add(k_right, k_right_bias);
+
+    //   Qk_vec cos_emb;
+    //   zero(cos_emb);
+    //   cos_emb =
+    //       (Dh == Dh_MAX || tid * QK_VEC_SIZE < Dh)
+    //           ? *reinterpret_cast<const Qk_vec *>(&cos_base[rotary_offset])
+    //           : cos_emb;
+
+    //   Qk_vec sin_emb;
+    //   zero(sin_emb);
+    //   sin_emb =
+    //       (Dh == Dh_MAX || tid * QK_VEC_SIZE < Dh)
+    //           ? *reinterpret_cast<const Qk_vec *>(&sin_base[rotary_offset])
+    //           : sin_emb;
+    //   float alpha = (tid % stride_all_lastdim) < stride ? static_cast<float>(-1)
+    //                                                     : static_cast<float>(1);
+    //   q = apply_rotary_emb(q, q_right, cos_emb, sin_emb, alpha);
+    //   k = apply_rotary_emb(k, k_right, cos_emb, sin_emb, alpha);
+    // }
 
     *reinterpret_cast<Qk_vec *>(&q_smem[tid * QK_VEC_SIZE]) = q;
 
@@ -1238,6 +1277,42 @@ void qkv_bias_add_transpose_split(const phi::GPUContext &dev_ctx,
   }
 }
 
+/* old rope emb */
+// template <typename T>
+// __global__ void RotrayKernel(const T *input,
+//                              const T *cos_emb,
+//                              const T *sin_emb,
+//                              const int *sequence_lengths,
+//                              T *output,
+//                              const int rotary_emb_dims,
+//                              const int batch_size,
+//                              const int head_num,
+//                              const int seq_len,
+//                              const int last_dim) {
+//   int bi = blockIdx.x;
+//   int hi = blockIdx.y;
+//   int si = blockIdx.z;
+//   if (sequence_lengths && si >= sequence_lengths[bi] * rotary_emb_dims) return;
+//   int half_lastdim = last_dim / 2;
+//   // Note(ZhenyuLi): Calculate the relevant data at one time, so that no
+//   // additional space is required.
+//   for (int ti = threadIdx.x; ti < half_lastdim; ti += blockDim.x) {
+//     int base_idx = bi * head_num * seq_len * last_dim +
+//                    hi * seq_len * last_dim + si * last_dim;
+//     int left_idx = base_idx + ti;
+//     const int right_idx = base_idx + ti + half_lastdim;
+//     int emb_idx = bi * seq_len * last_dim + si * last_dim + ti;
+//     T input_left = input[left_idx];
+//     T input_right = input[right_idx];
+//     T cos_tmp = cos_emb[emb_idx];
+//     T sin_tmp = sin_emb[emb_idx];
+//     T res1 = input_left * cos_tmp - input_right * sin_tmp;
+//     T res2 = input_right * cos_tmp + input_left * sin_tmp;
+//     output[left_idx] = res1;
+//     output[right_idx] = res2;
+//   }
+// }
+
 template <typename T>
 __global__ void RotrayKernel(const T *input,
                              const T *cos_emb,
@@ -1259,9 +1334,9 @@ __global__ void RotrayKernel(const T *input,
   for (int ti = threadIdx.x; ti < half_lastdim; ti += blockDim.x) {
     int base_idx = bi * head_num * seq_len * last_dim +
                    hi * seq_len * last_dim + si * last_dim;
-    int left_idx = base_idx + ti;
-    const int right_idx = base_idx + ti + half_lastdim;
-    int emb_idx = bi * seq_len * last_dim + si * last_dim + ti;
+    int left_idx = base_idx + 2 * ti;
+    const int right_idx = base_idx + 2 * ti + 1;
+    int emb_idx = bi * seq_len * last_dim + si * last_dim + 2 * ti;
     T input_left = input[left_idx];
     T input_right = input[right_idx];
     T cos_tmp = cos_emb[emb_idx];

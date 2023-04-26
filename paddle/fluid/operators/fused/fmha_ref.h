@@ -28,10 +28,10 @@ limitations under the License. */
 #include "paddle/phi/kernels/fusion/fused_softmax_mask_kernel.h"
 #include "paddle/phi/kernels/fusion/fused_multihead_attention_kernel.h"
 #include "paddle/phi/kernels/fusion/fused_multihead_attention_variable_kernel.h"
+// #include "paddle/fluid/operators/fused/fused_multi_transformer_op.cu.h"
 
 namespace paddle {
 namespace operators {
-
 template <paddle::DataType D>
 class PDTraits;
 

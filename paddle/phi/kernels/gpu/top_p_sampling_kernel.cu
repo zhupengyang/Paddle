@@ -674,5 +674,9 @@ PD_REGISTER_KERNEL(top_p_sampling,
                    ALL_LAYOUT,
                    phi::TopPSamplingKernel,
                    float,
+#if CUDA_VERSION >= 11060
                    phi::dtype::float16,
                    phi::dtype::bfloat16) {}
+#else
+                   phi::dtype::float16) {}
+#endif
