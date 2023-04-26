@@ -1670,7 +1670,7 @@ class FFNGluHelper {
   std::string gemm_method_;
 };
 
-template <typename T>
+template <typename T, typename nvT=typename PDDataTypeTraits<T>::DataType>
 class FFNGluDyquantHelper {
  public:
   FFNGluDyquantHelper(const phi::GPUContext &dev_ctx,
@@ -1679,14 +1679,16 @@ class FFNGluDyquantHelper {
                       int hid_dim,
                       int dim_ffn,
                       int dim_embed,
-                      const std::string gemm_method)
+                      const std::string gemm_method,
+                      paddle::operators::CutlassFpAIntBGemmRunner<nvT,  uint8_t>* mixed_gemm_runner)
       : dev_ctx_(dev_ctx),
         act_method_(act_method),
         token_num_(token_num),
         hid_dim_(hid_dim),
         dim_ffn_(dim_ffn),
         dim_embed_(dim_embed),
-        gemm_method_(gemm_method) {}
+        gemm_method_(gemm_method),
+        mixed_gemm_runner_(mixed_gemm_runner) {}
 
   // dst = act(fc(src[0]) + bias) * src[1]
   void Compute(const phi::DenseTensor *input,
@@ -1699,19 +1701,21 @@ class FFNGluDyquantHelper {
     // input's shape [token_num, dim_ffn], bias' shape [dim_ffn]
     // output's shape [token_num, hid_dim], bias_out's shape [token_num,
     // dim_ffn]
-
+    // for debug
+      VLOG(5) << "FFNGluDyquantHelper,"<<" token_num_:" <<token_num_
+                                       <<" hid_dim_:" <<hid_dim_
+                                       <<" dim_ffn_:" <<dim_ffn_
+                                       <<" dim_embed_:" <<dim_embed_;
     if (gemm_method_ == "weight-only") {
-      auto mixed_gemm_runner = paddle::operators::CutlassFpAIntBGemmRunner<
-          typename PDDataTypeTraits<T>::DataType,
-          uint8_t>();
-      mixed_gemm_runner.gemm_bias_act(
+      VLOG(5) << "do weight-only gemm";
+      mixed_gemm_runner_->gemm_bias_act(
           reinterpret_cast<const typename PDDataTypeTraits<T>::DataType *>(
               input->data<T>()),
           reinterpret_cast<const uint8_t *>(weight->data<int8_t>()),
           scale->data<float>(),
           reinterpret_cast<const typename PDDataTypeTraits<T>::DataType *>(
               bias->data<T>()),
-          reinterpret_cast<typename PDDataTypeTraits<T>::DataType *>(bias_out),
+          reinterpret_cast<typename PDDataTypeTraits<T>::DataType *>(bias_out->data<T>()),
           token_num_,
           dim_ffn_,
           dim_embed_,
@@ -1719,7 +1723,10 @@ class FFNGluDyquantHelper {
           reinterpret_cast<char *>(workspace->data<uint8_t>()),
           workspace->numel(),
           dev_ctx_.stream());
+      VLOG(5) << "input:" << *input;
+      VLOG(5) << "output:" << *bias_out;
     } else if (gemm_method_ == "LLM.int8") {
+      // TODO(wangbojun), here need to add bias
       LLMGemm<T>(dev_ctx_,
                  weight,
                  input,
@@ -1734,12 +1741,14 @@ class FFNGluDyquantHelper {
     }
 
     if (act_method_ == "geglu") {
+      VLOG(5) << "doing geglu";
       LaunchActFFNGlu<T, GeluFunctor<T>>(dev_ctx_,
                                          bias_out->data<T>(),
                                          output->data<T>(),
                                          token_num_,
                                          hid_dim_);
     } else if (act_method_ == "swiglu") {
+      VLOG(5) << "doing swiglu";
       LaunchActFFNGlu<T, CudaSwishFunctor<T>>(dev_ctx_,
                                               bias_out->data<T>(),
                                               output->data<T>(),
@@ -1756,6 +1765,7 @@ class FFNGluDyquantHelper {
   int dim_ffn_;
   int dim_embed_;
   std::string gemm_method_;
+  paddle::operators::CutlassFpAIntBGemmRunner<nvT, uint8_t>* mixed_gemm_runner_;
 };
 
 }  // namespace

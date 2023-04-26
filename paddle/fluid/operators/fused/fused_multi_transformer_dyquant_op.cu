@@ -20,7 +20,8 @@ limitations under the License. */
 
 #include<algorithm>
 
-
+#define _DEBUG_FUSED_MULTI_TRANSFORMER
+// #define _DEBUG_FUSED_MULTI_TRANSFORMER_PRINT_TENSOR
 DECLARE_bool(use_cutlass_fmha); 
 DECLARE_int64(custom_allreduce_one_shot_threshold);
 DECLARE_int64(custom_allreduce_two_shot_threshold);
@@ -74,7 +75,6 @@ class FusedMultiTransformerDyquantOpKernel : public framework::OpKernel<T> {
     if (sequence_lengths) {
       remove_padding = true;
     }
-
     phi::DenseTensor d_token_tensor;
     phi::DenseTensor padding_offset_tensor;
     phi::DenseTensor x_remove_padding;
@@ -310,7 +310,7 @@ class FusedMultiTransformerDyquantOpKernel : public framework::OpKernel<T> {
     // matmul weight is transposed
     int dim_ffn = ffn1_weight_dim[0];
     FFNGluDyquantHelper<T> ffn1_glu_dyquant_helper(
-        dev_ctx, act_method, token_num, dim_ffn / 2, dim_ffn, dim_embed, int8_gemm_method);
+        dev_ctx, act_method, token_num, dim_ffn / 2, dim_ffn, dim_embed, int8_gemm_method, &mixed_gemm_runner);
 
     auto ffn1_linear_compute = AttnMatMul<T>(
         dev_ctx, false, false, token_num, dim_ffn, dim_embed, false);
@@ -318,6 +318,21 @@ class FusedMultiTransformerDyquantOpKernel : public framework::OpKernel<T> {
     ffn1_out.Resize({{token_num, dim_ffn}});
     auto *ffn1_out_data =
         dev_ctx.Alloc<T>(&ffn1_out, ffn1_out.numel() * sizeof(T));
+
+
+    // interleaved-weight-int8
+    phi::DenseTensor mixgemm_workspace;
+    auto qkv_mixgemm_max_size=std::max(output_size,input_size);
+    auto ffn_mixgemm_max_size=std::max(dim_ffn, dim_embed);
+    auto mixgemm_max_size = std::max(qkv_mixgemm_max_size,ffn_mixgemm_max_size);
+    long mixgemm_workspace_size_bytes = mixed_gemm_runner.getWorkspaceSize(token_num, mixgemm_max_size, mixgemm_max_size);
+    char* mixgemm_workspace_data=nullptr;
+    if(interleaved_weight){
+      VLOG(5)<<"mix_gemm_workspace:"<<mixgemm_workspace_size_bytes<<" token_num: "<<token_num<<" mixgemm_max_size: "<<mixgemm_max_size;
+      // if using interleaved_weight, we need some workspace for cutlass gemm
+      mixgemm_workspace.Resize({mixgemm_workspace_size_bytes});
+      mixgemm_workspace_data = reinterpret_cast<char*>(dev_ctx.Alloc<uint8_t>(&mixgemm_workspace, mixgemm_workspace_size_bytes));
+    }
 
     // 7. ffn act + bias
     DropoutParam ffn1_dropout_param(true, 0, true, true, 0.0, nullptr, 0);
@@ -327,6 +342,7 @@ class FusedMultiTransformerDyquantOpKernel : public framework::OpKernel<T> {
     int tmp_dim_ffn = dim_ffn;
     if (use_glu) tmp_dim_ffn /= 2;
     int8_t *ffn1_dropout_mask_data = nullptr;
+    ffn1_dropout_out.Resize({{token_num, tmp_dim_ffn}});
     auto *ffn1_dropout_out_data = dev_ctx.Alloc<T>(
         &ffn1_dropout_out, ffn1_dropout_out.numel() * sizeof(T));
 
@@ -341,18 +357,7 @@ class FusedMultiTransformerDyquantOpKernel : public framework::OpKernel<T> {
     DropoutParam ffn2_dropout_param(true, 0, true, true, 0.0, nullptr, 0);
     FusedDropoutLayerNormHelper<T, uint8_t> ffn2_fused_dropout_helper(
         dev_ctx, token_num, dim_embed, ffn2_dropout_param, epsilon);
-    // interleaved-weight-int8
-    phi::DenseTensor mixgemm_workspace;
-    auto qkv_mixgemm_max_size=std::max(output_size,input_size);
-    auto ffn_mixgemm_max_size=std::max(dim_ffn, dim_embed);
-    auto mixgemm_max_size = std::max(qkv_mixgemm_max_size,ffn_mixgemm_max_size);
-    long mixgemm_workspace_size_bytes = mixed_gemm_runner.getWorkspaceSize(token_num, mixgemm_max_size, mixgemm_max_size);
-    char* mixgemm_workspace_data=nullptr;
-    if(interleaved_weight){
-      // if using interleaved_weight, we need some workspace for cutlass gemm
-      mixgemm_workspace.Resize({mixgemm_workspace_size_bytes});
-      mixgemm_workspace_data = reinterpret_cast<char*>(dev_ctx.Alloc<uint8_t>(&mixgemm_workspace, mixgemm_workspace_size_bytes));
-    }
+
     // calc
     auto *out = ctx.Output<phi::DenseTensor>("Out");
     auto *from_data = dev_ctx.Alloc<T>(out, out->numel() * sizeof(T));
@@ -428,7 +433,9 @@ class FusedMultiTransformerDyquantOpKernel : public framework::OpKernel<T> {
       }
 #ifdef _DEBUG_FUSED_MULTI_TRANSFORMER
       VLOG(0) << "step1";
+#ifdef _DEBUG_FUSED_MULTI_TRANSFORMER_PRINT_TENSOR
       VLOG(0) << "ln1_out:" << *buf1;
+#endif
 #endif
 
       // step2. qkv
@@ -439,9 +446,9 @@ class FusedMultiTransformerDyquantOpKernel : public framework::OpKernel<T> {
       if (!pre_layer_norm && i == 0) {
         const phi::DenseTensor *tmp_input_x =
             (encoder_remove_padding) ? &x_remove_padding : input_x;
-        VLOG(5)<<"Doing !pre_layer_norm&&i==0, qkv gemm, mnk:"<<token_num<<", "<<output_size<<", "<<input_size;
+        VLOG(5)<< "Doing !pre_layer_norm&&i==0, qkv gemm, mnk:" << token_num << ", " << output_size << ", " << input_size;
         if(int8_gemm_method=="weight-only"){
-          VLOG(2)<<"Doing quant weight-only qkv gemm mix";
+          VLOG(2)<<"Doing quant weight-only qkv gemm mix, !pre_layer_norm&&i==0";
           mixed_gemm_runner.gemm(
             reinterpret_cast<const typename PDDataTypeTraits<T>::DataType *>(tmp_input_x->data<T>()),
             reinterpret_cast<const uint8_t*>(qkv_weights[i]->data<int8_t>()),
@@ -468,8 +475,15 @@ class FusedMultiTransformerDyquantOpKernel : public framework::OpKernel<T> {
         }
       } else {
         VLOG(5)<<"Doing qkv gemm, mnk:"<<token_num<<", "<<output_size<<", "<<input_size;
+#ifdef _DEBUG_FUSED_MULTI_TRANSFORMER
+#ifdef _DEBUG_FUSED_MULTI_TRANSFORMER_PRINT_TENSOR
+VLOG(0) << "qkv_in, buf1:" << *buf1;
+VLOG(0) << "qkv_weights:" << *(qkv_weights[i]);
+VLOG(0) << "qkv_weights_scales:" << *(qkv_weights_scales[i]);
+#endif
+#endif
         if (int8_gemm_method=="weight-only") {
-          VLOG(2)<<"Doing quant weight-only qkv gemm mix";
+          VLOG(2)<<"Doing quant weight-only qkv gemm mix,!pre_layer_norm&&i==0 else";
           mixed_gemm_runner.gemm(
             reinterpret_cast<const typename PDDataTypeTraits<T>::DataType*>(buf1->data<T>()),
             reinterpret_cast<const uint8_t*>(qkv_weights[i]->data<int8_t>()),
@@ -497,9 +511,10 @@ class FusedMultiTransformerDyquantOpKernel : public framework::OpKernel<T> {
       }
 #ifdef _DEBUG_FUSED_MULTI_TRANSFORMER
       VLOG(0) << "step2";
-      VLOG(0) << "qkv_weight:"<<*(qkv_weights[0]);
-      VLOG(0) << "qkv_scale:"<<*(qkv_weights_scales[0]);
+#ifdef _DEBUG_FUSED_MULTI_TRANSFORMER_PRINT_TENSOR
+
       VLOG(0) << "qkv_out:" << qkv_out;
+#endif
 #endif
 
       // step3. fmha
@@ -711,7 +726,9 @@ class FusedMultiTransformerDyquantOpKernel : public framework::OpKernel<T> {
       }
 #ifdef _DEBUG_FUSED_MULTI_TRANSFORMER
       VLOG(0) << "step3";
+#ifdef _DEBUG_FUSED_MULTI_TRANSFORMER_PRINT_TENSOR
       VLOG(0) << "fmha_out:" << fmha_out;
+#endif
 #endif
       VLOG(5)<<"Doing out_linear gemm, mnk:"<<token_num<<", "<<dim_embed<<", "<<hidden_size;
       if (pre_layer_norm) {        
@@ -784,7 +801,9 @@ class FusedMultiTransformerDyquantOpKernel : public framework::OpKernel<T> {
 #ifdef _DEBUG_FUSED_MULTI_TRANSFORMER
       cudaDeviceSynchronize();
       VLOG(0) << "step4";
+#ifdef _DEBUG_FUSED_MULTI_TRANSFORMER_PRINT_TENSOR
       VLOG(0) << "out_linear_out:"<<*buf1;
+#endif
 #endif
 
       // step5. ln(residual + dropout(input + bias))
@@ -825,14 +844,16 @@ class FusedMultiTransformerDyquantOpKernel : public framework::OpKernel<T> {
             ln_var_data);
       }
 #ifdef _DEBUG_FUSED_MULTI_TRANSFORMER
-      cudaDeviceSynchronize();
       VLOG(0) << "step5";
+#ifdef _DEBUG_FUSED_MULTI_TRANSFORMER_PRINT_TENSOR
       VLOG(0) << "ffn1_input:" << *buf1;
+#endif
 #endif
 
       // step6. ffn matmul1
       VLOG(5)<<"Doing ffn1 gemm, mnk:"<<token_num<<", "<<dim_ffn<<", "<<dim_embed;
-      if (use_glu){
+      if (use_glu) {
+          VLOG(5)<<"Doing gemm with glu";
           ffn1_glu_dyquant_helper.Compute(buf1,
                                         ffn1_weights[i],
                                         ffn1_weights_scales[i],
@@ -841,13 +862,14 @@ class FusedMultiTransformerDyquantOpKernel : public framework::OpKernel<T> {
                                         &ffn1_out,
                                         &ffn1_dropout_out);
       } else {
+        VLOG(5)<<"Doing gemm without glu";
         if(int8_gemm_method=="weight-only"){
           mixed_gemm_runner.gemm_bias_act(
             reinterpret_cast<const typename PDDataTypeTraits<T>::DataType*>(buf1->data<T>()),
             reinterpret_cast<const uint8_t*>(ffn1_weights[i]->data<int8_t>()),
             ffn1_weights_scales[i]->data<float>(),
             reinterpret_cast<const typename PDDataTypeTraits<T>::DataType*>(ffn1_biases[i]->data<T>()),
-            reinterpret_cast<typename PDDataTypeTraits<T>::DataType*>(ffn1_out_data),
+            reinterpret_cast<typename PDDataTypeTraits<T>::DataType*>(ffn1_dropout_out_data),
             token_num,
             dim_ffn,
             dim_embed,
@@ -870,14 +892,16 @@ class FusedMultiTransformerDyquantOpKernel : public framework::OpKernel<T> {
       }      
 #ifdef _DEBUG_FUSED_MULTI_TRANSFORMER
       VLOG(0) << "step6";
+#ifdef _DEBUG_FUSED_MULTI_TRANSFORMER_PRINT_TENSOR
       VLOG(0) << "ffn1_output:" << ffn1_out;
-
+#endif
 #endif
 
       // step7. act bias
       // TODO(wangxi): remove dropout mask in inference
       // TODO(wangbojun): considered how to do this for llm.int8
       if(int8_gemm_method=="LLM.int8"&&!use_glu){
+       VLOG(0)<<"do fused_act_dropout_helper.DropoutActBias";
         fused_act_dropout_helper.DropoutActBias(dev_ctx,
                                                 ffn1_out_data,
                                                 ffn1_biases[i]->data<T>(),
@@ -886,20 +910,21 @@ class FusedMultiTransformerDyquantOpKernel : public framework::OpKernel<T> {
                                                 ffn1_dropout_mask_data);
       }
       // step8. ffn2 matmul
-      VLOG(5)<<"Doing ffn2 gemm, mnk:"<<token_num<<", "<<dim_embed<<", "<<dim_ffn;
+      VLOG(5)<<"Doing ffn2 gemm, mnk:"<<token_num<<", "<<dim_embed<<", "<<tmp_dim_ffn;
       if (pre_layer_norm) {
         if (custom_comm) {
           custom_comm->SwapInput(buf1);
         }
         if(int8_gemm_method=="weight-only") {
+          VLOG(5)<<"weight only gemm";
           mixed_gemm_runner.gemm(
-            reinterpret_cast<const typename PDDataTypeTraits<T>::DataType *>(ffn1_out_data),
+            reinterpret_cast<const typename PDDataTypeTraits<T>::DataType *>(ffn1_dropout_out_data),
             reinterpret_cast<const uint8_t*>(ffn2_weights[i]->data<int8_t>()),
             ffn2_weights_scales[i]->data<float>(),
             reinterpret_cast<typename PDDataTypeTraits<T>::DataType*>(buf1->data<T>()),
             token_num,
             dim_embed,
-            dim_ffn,
+            tmp_dim_ffn,
             mixgemm_workspace_data,
             mixgemm_workspace_size_bytes,
             dev_ctx.stream()
@@ -914,7 +939,7 @@ class FusedMultiTransformerDyquantOpKernel : public framework::OpKernel<T> {
               buf1,
               &cublaslt_workspace,
               "ffn2_"+ std::to_string(i) + "_step_" + std::to_string(time_step_value),
-              token_num, dim_ffn, dim_embed);
+              token_num, tmp_dim_ffn, dim_embed);
         }
       } else {
         if (custom_comm) {
@@ -922,7 +947,7 @@ class FusedMultiTransformerDyquantOpKernel : public framework::OpKernel<T> {
         }
         if(int8_gemm_method=="weight-only") {
           mixed_gemm_runner.gemm(
-            reinterpret_cast<const typename PDDataTypeTraits<T>::DataType *>(ffn1_out_data),
+            reinterpret_cast<const typename PDDataTypeTraits<T>::DataType *>(ffn1_dropout_out_data),
             reinterpret_cast<const uint8_t*>(ffn2_weights[i]->data<int8_t>()),
             ffn2_weights_scales[i]->data<float>(),
             reinterpret_cast<typename PDDataTypeTraits<T>::DataType*>(buf0->data<T>()),
@@ -947,12 +972,13 @@ class FusedMultiTransformerDyquantOpKernel : public framework::OpKernel<T> {
       }
 #ifdef _DEBUG_FUSED_MULTI_TRANSFORMER
       VLOG(0) << "step8.0";
+#ifdef _DEBUG_FUSED_MULTI_TRANSFORMER_PRINT_TENSOR
       if (pre_layer_norm) {
-        VLOG(0) << "ffn2_out:" << *buf1;
+        VLOG(0) << "ffn2_out, buf1:" << *buf1;
       } else {
-        VLOG(0) << "ffn2_out:" << *buf0;
+        VLOG(0) << "ffn2_out, buf0:" << *buf0;
       }
-      
+#endif
 #endif
 
       if (pre_layer_norm) {
@@ -972,11 +998,13 @@ class FusedMultiTransformerDyquantOpKernel : public framework::OpKernel<T> {
       }
 #ifdef _DEBUG_FUSED_MULTI_TRANSFORMER
       VLOG(0) << "step8.1";
+#ifdef _DEBUG_FUSED_MULTI_TRANSFORMER_PRINT_TENSOR
       if (pre_layer_norm) {
         VLOG(0) << "ffn2_out_rd:" << *buf1;
       } else {
         VLOG(0) << "ffn2_out_rd:" << *buf0;
       }
+#endif
 #endif
 
       // step9. residual bias
@@ -1024,7 +1052,9 @@ class FusedMultiTransformerDyquantOpKernel : public framework::OpKernel<T> {
       }
 #ifdef _DEBUG_FUSED_MULTI_TRANSFORMER
       VLOG(0) << "step9";
+#ifdef _DEBUG_FUSED_MULTI_TRANSFORMER_PRINT_TENSOR
       VLOG(0) << "residual_out:" << *buf1;
+#endif
 #endif
       if (pre_layer_norm) {
         x_data = buf1->data<T>();

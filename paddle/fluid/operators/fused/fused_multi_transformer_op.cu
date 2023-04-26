@@ -329,6 +329,7 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
     int tmp_dim_ffn = dim_ffn;
     if (use_glu) tmp_dim_ffn /= 2;
     int8_t *ffn1_dropout_mask_data = nullptr;
+    ffn1_dropout_out.Resize({{token_num, tmp_dim_ffn}});
     auto *ffn1_dropout_out_data = dev_ctx.Alloc<T>(
         &ffn1_dropout_out, ffn1_dropout_out.numel() * sizeof(T));
 
