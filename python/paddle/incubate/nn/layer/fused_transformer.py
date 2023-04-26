@@ -1266,6 +1266,10 @@ class FusedMultiTransformer(Layer):
                 return attrs[idx]
             return attrs
 
+        def _add_parameter(param):
+            assert param.name not in self._parameters
+            self._parameters[param.name] = param
+
         for i in range(num_layers):
             ln_scale_attr = get_attr(ln_scale_attrs, i)
             ln_bias_attr = get_attr(ln_bias_attrs, i)
@@ -1379,6 +1383,21 @@ class FusedMultiTransformer(Layer):
             self.ffn1_biases.append(ffn1_bias)
             self.ffn2_weights.append(ffn2_weight)
             self.ffn2_biases.append(ffn2_bias)
+
+            _add_parameter(ln_scale)
+            _add_parameter(ln_bias)
+            _add_parameter(qkv_weight)
+            _add_parameter(qkv_bias)
+            _add_parameter(linear_weight)
+            _add_parameter(linear_bias)
+
+            _add_parameter(ffn_ln_scale)
+            _add_parameter(ffn_ln_bias)
+            _add_parameter(ffn1_weight)
+            _add_parameter(ffn1_bias)
+            _add_parameter(ffn2_weight)
+            _add_parameter(ffn2_bias)
+
         self.dropout_rate = dropout_rate
         self.activation = activation
         self.name = name

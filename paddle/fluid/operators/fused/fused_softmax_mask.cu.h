@@ -51,7 +51,8 @@ template <typename T, int VEC_SIZE, int ELEMENTS_PER_THREADS>
 __global__ void FusedSoftmaxMaskVecKernel(T* dst,
                                           const T* src,
                                           const T* mask,
-                                          int seq_len) {
+                                          int seq_len,
+                                          const bool mask_broadcast_num_heads) {
   constexpr int block_size = 128;
   constexpr int warp_size = 32;
   constexpr int warps_per_block = block_size / warp_size;
@@ -67,7 +68,9 @@ __global__ void FusedSoftmaxMaskVecKernel(T* dst,
   int offset =
       ((blockIdx.y * gridDim.z + blockIdx.z) * seq_len + seq_id) * seq_len;
   // (bid * seq_len + seq_id) * seq_len
-  int mask_offset = (blockIdx.y * seq_len + seq_id) * seq_len;
+  int mask_offset = mask_broadcast_num_heads \
+                      ? (blockIdx.y * seq_len + seq_id) * seq_len
+                      : offset;
   src += offset;
   dst += offset;
   mask += mask_offset;
@@ -77,16 +80,18 @@ __global__ void FusedSoftmaxMaskVecKernel(T* dst,
   using VecT = phi::AlignedVector<T, VEC_SIZE>;
 
   VecT elements[VEC_NUMS];
-  VecT tmp_mask;
+  VecT tmp_mask[VEC_NUMS];
   float max_val = -std::numeric_limits<float>::infinity();
 
   for (int i = 0; (i * warp_size + threadIdx.x) * VEC_SIZE < seq_len; ++i) {
+    int tmp_mask_offset = mask_broadcast_num_heads ? 0 : i;
     phi::Load(src + (i * warp_size + threadIdx.x) * VEC_SIZE, &elements[i]);
-    phi::Load(mask + (i * warp_size + threadIdx.x) * VEC_SIZE, &tmp_mask);
+    phi::Load(mask + (i * warp_size + threadIdx.x) * VEC_SIZE,
+              &tmp_mask[tmp_mask_offset]);
 #pragma unroll
     for (int j = 0; j < VEC_SIZE; ++j) {
       // TODO(wangxi): vec add
-      elements[i][j] += tmp_mask[j];
+      elements[i][j] += tmp_mask[tmp_mask_offset][j];
       max_val = max(max_val, static_cast<float>(elements[i][j]));
     }
   }
@@ -116,7 +121,7 @@ __global__ void FusedSoftmaxMaskVecKernel(T* dst,
 
 #define SOFTMAX_MASK_KERNEL(VEC_SIZE, ELEMENTS)    \
   FusedSoftmaxMaskVecKernel<T, VEC_SIZE, ELEMENTS> \
-      <<<grid, block, 0, stream>>>(dst, src, mask, seq_len)
+      <<<grid, block, 0, stream>>>(dst, src, mask, seq_len, mask_broadcast_num_heads)
 
 // FIXME(wangxi): It is found that the performance of VEC_SIZE=2 is better
 //  than that of =4 and =8. Further analysis of the kernel is needed later.
@@ -155,6 +160,7 @@ void LaunchFusedSoftmaxMaskKernel(const T* src,
                                   const int batch_size,
                                   const int head_num,
                                   const int seq_len,
+                                  const bool mask_broadcast_num_heads,
                                   cudaStream_t stream) {
   PADDLE_ENFORCE_EQ(
       seq_len > 0 && seq_len <= 4096,
