@@ -831,7 +831,6 @@ VLOG(0) << "qkv_weights_scales:" << *(qkv_weights_scales[i]);
       // PADDLE_THROW(paddle::platform::errors::Fatal(
       //     "Paddle debuge throw"));
 #ifdef _DEBUG_FUSED_MULTI_TRANSFORMER
-      cudaDeviceSynchronize();
       VLOG(0) << "step4";
 #ifdef _DEBUG_FUSED_MULTI_TRANSFORMER_PRINT_TENSOR
       VLOG(0) << "out_linear_out:"<<*buf1;

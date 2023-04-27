@@ -366,7 +366,7 @@ inline __device__ void convert_from_float(uint4 &dst, Float8_ src) {  // NOLINT
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-// #ifdef ENABLE_BF16
+#ifdef ENABLE_BF16
 inline __device__ void convert_from_float(__nv_bfloat16 &dst, float src) {
   dst = __float2bfloat16(src);
 }
@@ -409,7 +409,7 @@ inline __device__ void convert_from_float(bf16_8_t &dst, Float8_ src) {
   dst.w = __floats2bfloat162_rn(src.w.x, src.w.y);
 #endif
 }
-// #endif  // ENABLE_BF16
+#endif  // ENABLE_BF16
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
