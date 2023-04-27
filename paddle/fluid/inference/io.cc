@@ -180,7 +180,7 @@ std::unique_ptr<framework::ProgramDesc> Load(framework::Executor* executor,
 
   std::string parse = "";
 #ifdef PADDLE_WITH_FASTDEPLOY_MODEL
-  VLOG(0) << "---- wenxin::UnitStringDecode";
+  VLOG(3) << "---- wenxin::UnitStringDecode";
   if (program_desc_str.substr(0, 16) == "fastdeploy_model") {
 #ifdef PADDLE_WITH_FASTDEPLOY_AUTH
     std::string key_index = "key1";
@@ -207,7 +207,7 @@ std::unique_ptr<framework::ProgramDesc> Load(framework::Executor* executor,
       true,
       platform::errors::Unavailable("Model version %ld is not supported.",
                                     main_program->Version()));
-  VLOG(0) << "---- wenxin::UnitStringDecode succeeded";
+  VLOG(3) << "---- wenxin::UnitStringDecode succeeded";
   if (load_params) {
     LoadPersistables(executor,
                      scope,
