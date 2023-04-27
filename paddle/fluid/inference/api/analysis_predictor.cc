@@ -2165,7 +2165,7 @@ bool AnalysisPredictor::LoadProgramDesc() {
     fin.close();
 
 #ifdef PADDLE_WITH_FASTDEPLOY_MODEL
-    VLOG(0) << "wenxin::UnitStringDecode" << std::endl;
+    VLOG(3) << "wenxin::UnitStringDecode" << std::endl;
     if (pb_content.substr(0, 16) == "fastdeploy_model") {
       std::string parse = "";
 #ifdef PADDLE_WITH_FASTDEPLOY_AUTH
@@ -2185,7 +2185,7 @@ bool AnalysisPredictor::LoadProgramDesc() {
       pb_content = wenxin::UnitStringDecode(pb_content, 1, parse);
     }
     proto.ParseFromString(pb_content);
-    VLOG(0) << "wenxin::UnitStringDecode succeeded" << std::endl;
+    VLOG(3) << "wenxin::UnitStringDecode succeeded" << std::endl;
 #else
     proto.ParseFromString(pb_content);
 #endif
