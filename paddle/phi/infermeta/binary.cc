@@ -3148,8 +3148,8 @@ void RmsNormInferMeta(const MetaTensor& x,
   std::vector<int64_t> x_dims_vec = phi::vectorize(x.dims());
   auto x_dims_size = x_dims_vec.size(); 
   
-  int64_t normalized_dims = 1; 
-  for(int i = begin_norm_axis; i < x_dims_size; ++i) {
+  size_t normalized_dims = 1; 
+  for(size_t i = begin_norm_axis; i < x_dims_size; ++i) {
     normalized_dims *= x_dims_vec[i];
   }
   

@@ -1,33 +1,32 @@
-/***************************************************************************************************
- * Copyright (c) 2017 - 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: BSD-3-Clause
+/*
+ * Copyright (c) 2020-2023, NVIDIA CORPORATION.  All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * 1. Redistributions of source code must retain the above copyright notice, this
- * list of conditions and the following disclaimer.
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- * this list of conditions and the following disclaimer in the documentation
- * and/or other materials provided with the distribution.
- *
- * 3. Neither the name of the copyright holder nor the names of its
- * contributors may be used to endorse or promote products derived from
- * this software without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- **************************************************************************************************/
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+/* Copyright (c) 2023 PaddlePaddle Authors. All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License. */
 
 /*! \file
     \brief Template for a pipelined GEMM kernel. Does not compute batching or support split-K.
@@ -71,7 +70,7 @@ struct GemmFpAIntB {
     using LayoutB      = typename Mma::IteratorB::Element;
     using ElementC     = typename Epilogue::OutputTileIterator::Element;
     using LayoutC      = typename Mma::LayoutC;
-    using ElementScale = ElementC;
+    using ElementScale = float;
 
     static ComplexTransform const kTransformA = Mma::kTransformA;
     static ComplexTransform const kTransformB = Mma::kTransformA;
@@ -92,11 +91,12 @@ struct GemmFpAIntB {
     /// Warp count (concept: GemmShape)
     using WarpCount               = typename Mma::WarpCount;
     static int const kThreadCount = 32 * WarpCount::kCount;
+    static int const kSplitKAlignment = const_max(128 / sizeof_bits<ElementA>::value, 128 / sizeof_bits<ElementB>::value);
 
     static constexpr int kInterleave = Mma::IteratorB::Shape::kRow / Mma::Shape::kK;
 
     /// Parameters structure
-    struct Arguments {
+    struct Arguments : UniversalArgumentsBase {
         GemmUniversalMode mode = GemmUniversalMode::kGemm;
 
         cutlass::gemm::GemmCoord                         problem_size;
@@ -127,7 +127,8 @@ struct GemmFpAIntB {
         Arguments() {}
 
         CUTLASS_HOST_DEVICE
-        Arguments(cutlass::gemm::GemmCoord const&                  problem_size,
+        Arguments(
+                  cutlass::gemm::GemmCoord const&                  problem_size,
                   typename Mma::IteratorA::TensorRef               ref_A,
                   typename Mma::IteratorB::TensorRef               ref_B,
                   typename Mma::IteratorScale::TensorRef           ref_scale,
@@ -138,13 +139,12 @@ struct GemmFpAIntB {
                   int const*                                       gather_A_indices  = nullptr,
                   int const*                                       gather_B_indices  = nullptr,
                   int const*                                       scatter_D_indices = nullptr):
-            problem_size(problem_size),
+            UniversalArgumentsBase(mode, problem_size, /*serial_split_k_factor=*/1, /*batch_stride_D=*/0),
             ref_A(ref_A),
             ref_B(ref_B),
             ref_scale(ref_scale),
             ref_C(ref_C),
             ref_D(ref_D),
-            batch_count(serial_split_k_factor),
             output_op(output_op),
             gather_A_indices(gather_A_indices),
             gather_B_indices(gather_B_indices),
@@ -154,23 +154,30 @@ struct GemmFpAIntB {
     };
 
     /// Parameters structure
-    struct Params {
-        cutlass::gemm::GemmCoord                         problem_size;
-        cutlass::gemm::GemmCoord                         grid_tiled_shape;
-        int                                              swizzle_log_tile;
+    struct Params : UniversalParamsBase<
+    ThreadblockSwizzle,
+    ThreadblockShape,
+    ElementA,
+    ElementB,
+    ElementC> {
+        using ParamsBase = UniversalParamsBase<
+            ThreadblockSwizzle,
+            ThreadblockShape,
+            ElementA,
+            ElementB,
+            ElementC>;
+
         typename Mma::IteratorA::Params                  params_A;
-        typename Mma::IteratorA::TensorRef               ref_A;
         typename Mma::IteratorB::Params                  params_B;
-        typename Mma::IteratorB::TensorRef               ref_B;
         typename Mma::IteratorScale::Params              params_scale;
-        typename Mma::IteratorScale::TensorRef           ref_scale;
         typename Epilogue::OutputTileIterator::Params    params_C;
-        typename Epilogue::OutputTileIterator::TensorRef ref_C;
         typename Epilogue::OutputTileIterator::Params    params_D;
+        typename Mma::IteratorA::TensorRef               ref_A;
+        typename Mma::IteratorB::TensorRef               ref_B;
+        typename Mma::IteratorScale::TensorRef           ref_scale;
+        typename Epilogue::OutputTileIterator::TensorRef ref_C;
         typename Epilogue::OutputTileIterator::TensorRef ref_D;
         typename EpilogueOutputOp::Params                output_op;
-        int*                                             semaphore;
-        int                                              gemm_k_size;
         // For gather+scatter operations
         int const* gather_A_indices;
         int const* gather_B_indices;
@@ -180,17 +187,15 @@ struct GemmFpAIntB {
         // Methods
         //
 
-        CUTLASS_HOST_DEVICE
-        Params(): swizzle_log_tile(0), semaphore(0), gemm_k_size(0) {}
 
         CUTLASS_HOST_DEVICE
-        Params(Arguments const&                args,
-               cutlass::gemm::GemmCoord const& grid_tiled_shape,
-               const int                       gemm_k_size,
-               void*                           workspace = nullptr):
-            problem_size(args.problem_size),
-            grid_tiled_shape(grid_tiled_shape),
-            swizzle_log_tile(ThreadblockSwizzle().get_log_tile(grid_tiled_shape)),
+        Params() = default;
+
+        CUTLASS_HOST_DEVICE
+        Params(Arguments const& args,
+               int device_sms,
+               int sm_occupancy):
+            ParamsBase(args, device_sms, sm_occupancy),
             params_A(args.ref_A.layout()),
             ref_A(args.ref_A),
             params_B(args.ref_B.layout()),
@@ -202,8 +207,6 @@ struct GemmFpAIntB {
             params_D(args.ref_D.layout()),
             ref_D(args.ref_D),
             output_op(args.output_op),
-            semaphore(static_cast<int*>(workspace)),
-            gemm_k_size(gemm_k_size),
             gather_A_indices(args.gather_A_indices),
             gather_B_indices(args.gather_B_indices),
             scatter_D_indices(args.scatter_D_indices)
@@ -279,6 +282,15 @@ struct GemmFpAIntB {
     {
 
         return 0;
+    }
+
+    CUTLASS_DEVICE
+    static void invoke(
+        Params const &params,
+        SharedStorage &shared_storage)
+    {
+        GemmFpAIntB op;
+        op(params, shared_storage);
     }
 
     // The dummy template parameter is not used and exists so that we can compile this code using
@@ -471,11 +483,14 @@ struct GemmFpAIntB {
     void operator()(Params const& params, SharedStorage& shared_storage)
     {
 #if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 700) && (__CUDA_ARCH__ < 750)
-        static constexpr bool compile_needed = platform::is_same<KernelArch, arch::Sm70>::value;
-        KernelRunner<compile_needed>::run_kernel(params, shared_storage);
+        // static constexpr bool compile_needed = platform::is_same<KernelArch, arch::Sm70>::value;
+        // KernelRunner<compile_needed>::run_kernel(params, shared_storage);
+        CUTLASS_NOT_IMPLEMENTED();
+
 #elif defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 750) && (__CUDA_ARCH__ < 800)
-        static constexpr bool compile_needed = platform::is_same<KernelArch, arch::Sm75>::value;
-        KernelRunner<compile_needed>::run_kernel(params, shared_storage);
+        // static constexpr bool compile_needed = platform::is_same<KernelArch, arch::Sm75>::value;
+        // KernelRunner<compile_needed>::run_kernel(params, shared_storage);
+        CUTLASS_NOT_IMPLEMENTED();
 #elif defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 800) && (__CUDA_ARCH__ < 900)
         static constexpr bool compile_needed = platform::is_same<KernelArch, arch::Sm80>::value;
         KernelRunner<compile_needed>::run_kernel(params, shared_storage);

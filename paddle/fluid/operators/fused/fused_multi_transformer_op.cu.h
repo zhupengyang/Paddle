@@ -19,23 +19,32 @@ limitations under the License. */
 
 #pragma once
 
+#include <fstream>
+#include <iomanip>
+#include "paddle/fluid/operators/fused/cutlass/cutlass_kernels/fpA_intB_gemm/fpA_intB_gemm_template.h"
+#include "paddle/fluid/operators/fused/llm_int8.h"
 #include "paddle/fluid/operators/fused/mmha_util.cu.h"
 
-#include <fstream> 
-#include <iomanip> 
-
 DECLARE_bool(gemm_use_half_precision_compute_type);
+DECLARE_double(custom_llm_int8_threshold);
 
 namespace paddle {
 namespace operators {
 
+template class CutlassFpAIntBGemmRunner<
+    PDDataTypeTraits<paddle::platform::float16>::DataType,
+    uint8_t>;
+template class CutlassFpAIntBGemmRunner<
+    PDDataTypeTraits<paddle::platform::bfloat16>::DataType,
+    uint8_t>;
+
 template <typename T>
-void print_tensor(const T *t, int size, const char *name){
+void print_tensor(const T *t, int size, const char *name) {
   using namespace std;
   ofstream out_txt_file;
   out_txt_file.open(name, ios::out | ios::trunc);
   out_txt_file << fixed;
-  for(int i=0; i < size; i++){
+  for (int i = 0; i < size; i++) {
     out_txt_file << setprecision(8) << static_cast<float>(t[i]) << endl;
   }
   out_txt_file.close();
@@ -67,7 +76,7 @@ template <typename T>
 struct BaseActivationFunctor {
   using ELEMENT_TYPE = T;
 
-  using AttrPair = std::vector<std::pair<const char*, float*>>;
+  using AttrPair = std::vector<std::pair<const char *, float *>>;
 
   AttrPair GetAttrs() { return AttrPair(); }
 };
@@ -633,8 +642,8 @@ __global__ void masked_multihead_attention_kernel(
 #ifdef _DEBUG_FUSED_MULTI_TRANSFORMER
   // if (bi == 0 && hi == 0 && tid == 0) {
   //   printf("=======q_out=======\n");
-  //   for (int i = 0; i < Dh; ++i) printf("%f ", static_cast<float>(q_smem[i]));
-  //   printf("\n");
+  //   for (int i = 0; i < Dh; ++i) printf("%f ",
+  //   static_cast<float>(q_smem[i])); printf("\n");
   // }
   // __syncthreads();
 #endif
@@ -875,16 +884,22 @@ inline size_t smem_size_in_bytes(
   return max(softmax_sz, red_sz);
 }
 
-#define MMHA_LAUNCH_KERNEL(                                                                                                  \
-    T, Dh, Dh_MAX, THDS_PER_KEY, THDS_PER_VALUE, THDS_PER_BLOCK, stream)                                                     \
-  size_t smem_sz =                                                                                                           \
-      smem_size_in_bytes<T>(params, Dh, THDS_PER_VALUE, THDS_PER_BLOCK);                                                     \
-  constexpr auto kernel_fn = masked_multihead_attention_kernel<T, Dh, Dh_MAX, THDS_PER_KEY, THDS_PER_VALUE, THDS_PER_BLOCK>; \
-  if (smem_sz > 0xc000) {                                                                                                    \
-    cudaFuncSetAttribute(                                                                                                    \
-        kernel_fn, cudaFuncAttributeMaxDynamicSharedMemorySize, smem_sz);                                                    \
-  }                                                                                                                          \
-  dim3 grid(params.num_head, params.batch_size);                                                                             \
+#define MMHA_LAUNCH_KERNEL(                                               \
+    T, Dh, Dh_MAX, THDS_PER_KEY, THDS_PER_VALUE, THDS_PER_BLOCK, stream)  \
+  size_t smem_sz =                                                        \
+      smem_size_in_bytes<T>(params, Dh, THDS_PER_VALUE, THDS_PER_BLOCK);  \
+  constexpr auto kernel_fn =                                              \
+      masked_multihead_attention_kernel<T,                                \
+                                        Dh,                               \
+                                        Dh_MAX,                           \
+                                        THDS_PER_KEY,                     \
+                                        THDS_PER_VALUE,                   \
+                                        THDS_PER_BLOCK>;                  \
+  if (smem_sz > 0xc000) {                                                 \
+    cudaFuncSetAttribute(                                                 \
+        kernel_fn, cudaFuncAttributeMaxDynamicSharedMemorySize, smem_sz); \
+  }                                                                       \
+  dim3 grid(params.num_head, params.batch_size);                          \
   kernel_fn<<<grid, THDS_PER_BLOCK, smem_sz, stream>>>(params)
 
 template <typename T, int Dh, int Dh_MAX>
@@ -1022,7 +1037,7 @@ __global__ void write_cache_k_kernel(T *cache_k,
   if (seq_lens && seq_lens[bi] == 0) {
     return;
   }
-  
+
   const int hi = blockIdx.z;
   constexpr int X_ELEMS = VEC_16B / sizeof(T);
 
@@ -1134,12 +1149,17 @@ void write_cache_kv(const phi::GPUContext &dev_ctx,
                     const int seq_len,
                     const int max_seq_len,
                     const int dim_head) {
-  write_cache_kv(dev_ctx, 
-                 cache_k, 
-                 cache_v, 
-                 k, v, nullptr, 
-                 bsz, num_head, seq_len, 
-                 max_seq_len, dim_head);
+  write_cache_kv(dev_ctx,
+                 cache_k,
+                 cache_v,
+                 k,
+                 v,
+                 nullptr,
+                 bsz,
+                 num_head,
+                 seq_len,
+                 max_seq_len,
+                 dim_head);
 }
 
 template <typename T, int VecSize, bool ComputeBias>
@@ -1512,10 +1532,10 @@ __global__ void InitOutValueKernel(T *output_data,
   int64_t global_thread_idx = bid * blockDim.x + tid;
 
   for (int linear_index = global_thread_idx * VecSize,
-               step = gridDim.x * blockDim.x * VecSize;
+           step = gridDim.x * blockDim.x * VecSize;
        linear_index < numel;
        linear_index += step) {
-    for (int i = 0; i < VecSize; i ++) {
+    for (int i = 0; i < VecSize; i++) {
       output_data[linear_index + i] = init_value;
     }
   }
@@ -1527,18 +1547,18 @@ void InitValue(const phi::GPUContext &dev_ctx,
                const int64_t numel,
                const T init_value) {
   constexpr int PackSize = VEC_16B / sizeof(T);
-  PADDLE_ENFORCE_EQ(numel % PackSize,
-                    0,
-                    platform::errors::PreconditionNotMet(
-                        "numel=%d must be divisible by vec_size=%d",
-                        numel,
-                        PackSize));
+  PADDLE_ENFORCE_EQ(
+      numel % PackSize,
+      0,
+      platform::errors::PreconditionNotMet(
+          "numel=%d must be divisible by vec_size=%d", numel, PackSize));
   const int pack_num = numel / PackSize;
   const int blocksize = 128;
   int grid_size = 1;
   GetNumBlocks(pack_num, &grid_size);
-  InitOutValueKernel<T, PackSize><<<grid_size, blocksize, 0, dev_ctx.stream()>>>(
-      output_data, numel, init_value);
+  InitOutValueKernel<T, PackSize>
+      <<<grid_size, blocksize, 0, dev_ctx.stream()>>>(
+          output_data, numel, init_value);
 }
 
 template <typename T, typename Functor, int VecSize>
@@ -1586,25 +1606,14 @@ void LaunchActFFNGlu(const phi::GPUContext &dev_ctx,
       GetNumBlocks(elem_cnt / PackSize, &grid_size);
       ActFFNGlu<T, Functor, PackSize>
           <<<grid_size, blocksize, 0, dev_ctx.stream()>>>(
-              input,
-              output,
-              functor,
-              token_num,
-              hid_dim,
-              elem_cnt);
+              input, output, functor, token_num, hid_dim, elem_cnt);
       break;
     default:
       GetNumBlocks(elem_cnt, &grid_size);
-      ActFFNGlu<T, Functor, 1>
-          <<<grid_size, blocksize, 0, dev_ctx.stream()>>>(
-              input,
-              output,
-              functor,
-              token_num,
-              hid_dim,
-              elem_cnt);
+      ActFFNGlu<T, Functor, 1><<<grid_size, blocksize, 0, dev_ctx.stream()>>>(
+          input, output, functor, token_num, hid_dim, elem_cnt);
       break;
-    }
+  }
 }
 
 template <typename T>
@@ -1658,6 +1667,105 @@ class FFNGluHelper {
   int hid_dim_;
   int dim_ffn_;
   int dim_embed_;
+  std::string gemm_method_;
+};
+
+template <typename T, typename nvT=typename PDDataTypeTraits<T>::DataType>
+class FFNGluDyquantHelper {
+ public:
+  FFNGluDyquantHelper(const phi::GPUContext &dev_ctx,
+                      const std::string &act_method,
+                      int token_num,
+                      int hid_dim,
+                      int dim_ffn,
+                      int dim_embed,
+                      const std::string gemm_method,
+                      paddle::operators::CutlassFpAIntBGemmRunner<nvT,  uint8_t>* mixed_gemm_runner)
+      : dev_ctx_(dev_ctx),
+        act_method_(act_method),
+        token_num_(token_num),
+        hid_dim_(hid_dim),
+        dim_ffn_(dim_ffn),
+        dim_embed_(dim_embed),
+        gemm_method_(gemm_method),
+        mixed_gemm_runner_(mixed_gemm_runner) {}
+
+  // dst = act(fc(src[0]) + bias) * src[1]
+  void Compute(const phi::DenseTensor *input,
+               const phi::DenseTensor *weight,
+               const phi::DenseTensor *scale,
+               const phi::DenseTensor *bias,
+               phi::DenseTensor *workspace,
+               phi::DenseTensor *bias_out,
+               phi::DenseTensor *output) {
+    // input's shape [token_num, dim_ffn], bias' shape [dim_ffn]
+    // output's shape [token_num, hid_dim], bias_out's shape [token_num,
+    // dim_ffn]
+    // for debug
+      VLOG(5) << "FFNGluDyquantHelper,"<<" token_num_:" <<token_num_
+                                       <<" hid_dim_:" <<hid_dim_
+                                       <<" dim_ffn_:" <<dim_ffn_
+                                       <<" dim_embed_:" <<dim_embed_;
+    if (gemm_method_ == "weight-only") {
+      VLOG(5) << "do weight-only gemm";
+      mixed_gemm_runner_->gemm_bias_act(
+          reinterpret_cast<const typename PDDataTypeTraits<T>::DataType *>(
+              input->data<T>()),
+          reinterpret_cast<const uint8_t *>(weight->data<int8_t>()),
+          scale->data<float>(),
+          reinterpret_cast<const typename PDDataTypeTraits<T>::DataType *>(
+              bias->data<T>()),
+          reinterpret_cast<typename PDDataTypeTraits<T>::DataType *>(bias_out->data<T>()),
+          token_num_,
+          dim_ffn_,
+          dim_embed_,
+          "none",
+          reinterpret_cast<char *>(workspace->data<uint8_t>()),
+          workspace->numel(),
+          dev_ctx_.stream());
+      VLOG(5) << "input:" << *input;
+      VLOG(5) << "output:" << *bias_out;
+    } else if (gemm_method_ == "LLM.int8") {
+      // TODO(wangbojun), here need to add bias
+      LLMGemm<T>(dev_ctx_,
+                 weight,
+                 input,
+                 scale,
+                 FLAGS_custom_llm_int8_threshold,
+                 bias_out,
+                 workspace,
+                 "ffn1_" + act_method_,
+                 token_num_,
+                 dim_embed_,
+                 dim_ffn_);
+    }
+
+    if (act_method_ == "geglu") {
+      VLOG(5) << "doing geglu";
+      LaunchActFFNGlu<T, GeluFunctor<T>>(dev_ctx_,
+                                         bias_out->data<T>(),
+                                         output->data<T>(),
+                                         token_num_,
+                                         hid_dim_);
+    } else if (act_method_ == "swiglu") {
+      VLOG(5) << "doing swiglu";
+      LaunchActFFNGlu<T, CudaSwishFunctor<T>>(dev_ctx_,
+                                              bias_out->data<T>(),
+                                              output->data<T>(),
+                                              token_num_,
+                                              hid_dim_);
+    }
+  }
+
+ private:
+  const phi::GPUContext &dev_ctx_;
+  std::string act_method_;
+  int token_num_;
+  int hid_dim_;
+  int dim_ffn_;
+  int dim_embed_;
+  std::string gemm_method_;
+  paddle::operators::CutlassFpAIntBGemmRunner<nvT, uint8_t>* mixed_gemm_runner_;
 };
 
 }  // namespace
