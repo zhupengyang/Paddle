@@ -502,6 +502,10 @@ class FusedMultiTransformerDyquantOpKernel : public framework::OpKernel<T> {
               &cublaslt_workspace,
               "qkv_"+ std::to_string(i) + "_step_" + std::to_string(time_step_value),
               token_num, input_size, output_size);
+        } else {
+          PADDLE_THROW(phi::errors::Unimplemented(
+              "int8_gemm_method (%s) does not support in fmt_dyquant_op.",
+              int8_gemm_method.c_str()));
         }
       } else {
         VLOG(5)<<"Doing qkv gemm, mnk:"<<token_num<<", "<<output_size<<", "<<input_size;
@@ -537,6 +541,10 @@ VLOG(0) << "qkv_weights_scales:" << *(qkv_weights_scales[i]);
             &cublaslt_workspace,
             "qkv_"+ std::to_string(i) + "_step_" + std::to_string(time_step_value),
             token_num, input_size, output_size);    
+        } else {
+          PADDLE_THROW(phi::errors::Unimplemented(
+              "int8_gemm_method (%s) does not support in fmt_dyquant_op.",
+              int8_gemm_method.c_str()));
         }
       }
 #ifdef _DEBUG_FUSED_MULTI_TRANSFORMER
@@ -790,6 +798,10 @@ VLOG(0) << "qkv_weights_scales:" << *(qkv_weights_scales[i]);
             &cublaslt_workspace,
             "out_linear_"+ std::to_string(i) + "_step_" + std::to_string(time_step_value),
             token_num, hidden_size, dim_embed);
+        } else {
+          PADDLE_THROW(phi::errors::Unimplemented(
+              "int8_gemm_method (%s) does not support in fmt_dyquant_op.",
+              int8_gemm_method.c_str()));
         }
         if (custom_comm) {
           *buf1 = custom_comm->AllReduce();
@@ -821,6 +833,10 @@ VLOG(0) << "qkv_weights_scales:" << *(qkv_weights_scales[i]);
               &cublaslt_workspace,
               "out_linear_"+ std::to_string(i) + "_step_" + std::to_string(time_step_value),
               token_num, hidden_size, dim_embed);
+        } else {
+          PADDLE_THROW(phi::errors::Unimplemented(
+              "int8_gemm_method (%s) does not support in fmt_dyquant_op.",
+              int8_gemm_method.c_str()));
         }
         if (custom_comm) {
           *buf0 = custom_comm->AllReduce();
@@ -828,8 +844,6 @@ VLOG(0) << "qkv_weights_scales:" << *(qkv_weights_scales[i]);
           AllReduce<T>(*buf0, ring_id, buf0->numel(), dev_ctx);
         }
       }
-      // PADDLE_THROW(paddle::platform::errors::Fatal(
-      //     "Paddle debuge throw"));
 #ifdef _DEBUG_FUSED_MULTI_TRANSFORMER
       VLOG(0) << "step4";
 #ifdef _DEBUG_FUSED_MULTI_TRANSFORMER_PRINT_TENSOR
@@ -919,6 +933,10 @@ VLOG(0) << "qkv_weights_scales:" << *(qkv_weights_scales[i]);
                 &cublaslt_workspace,
                 "ffn1_"+ std::to_string(i) + "_step_" + std::to_string(time_step_value),
                 token_num, dim_embed, dim_ffn);
+        } else {
+          PADDLE_THROW(phi::errors::Unimplemented(
+              "int8_gemm_method (%s) does not support in fmt_dyquant_op.",
+              int8_gemm_method.c_str()));
         }
       }      
 #ifdef _DEBUG_FUSED_MULTI_TRANSFORMER
@@ -971,6 +989,10 @@ VLOG(0) << "qkv_weights_scales:" << *(qkv_weights_scales[i]);
               &cublaslt_workspace,
               "ffn2_"+ std::to_string(i) + "_step_" + std::to_string(time_step_value),
               token_num, tmp_dim_ffn, dim_embed);
+        } else {
+          PADDLE_THROW(phi::errors::Unimplemented(
+              "int8_gemm_method (%s) does not support in fmt_dyquant_op.",
+              int8_gemm_method.c_str()));
         }
       } else {
         if (custom_comm) {
@@ -999,6 +1021,10 @@ VLOG(0) << "qkv_weights_scales:" << *(qkv_weights_scales[i]);
               &cublaslt_workspace,
               "ffn2_"+ std::to_string(i) + "_step_" + std::to_string(time_step_value),
               token_num, dim_ffn, dim_embed);
+        } else {
+          PADDLE_THROW(phi::errors::Unimplemented(
+              "int8_gemm_method (%s) does not support in fmt_dyquant_op.",
+              int8_gemm_method.c_str()));
         }
       }
 #ifdef _DEBUG_FUSED_MULTI_TRANSFORMER
