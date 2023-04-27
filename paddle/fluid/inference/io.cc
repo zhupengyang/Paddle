@@ -29,6 +29,14 @@ limitations under the License. */
 // phi
 #include "paddle/phi/kernels/declarations.h"
 
+#ifdef PADDLE_WITH_FASTDEPLOY_MODEL
+#include "paddle/fluid/inference/utils/wenxin.h"
+#endif
+
+#ifdef PADDLE_WITH_FASTDEPLOY_AUTH
+#include "paddle/fluid/inference/utils/auth.h"
+#endif
+
 DEFINE_string(devices, "", "The devices to be used which is joined by comma.");
 DEFINE_int32(math_num_threads,
              1,
@@ -79,7 +87,8 @@ void LoadPersistables(framework::Executor* executor,
                       const framework::ProgramDesc& main_program,
                       const std::string& dirname,
                       const std::string& param_filename,
-                      bool model_from_memory = false) {
+                      bool model_from_memory,
+                      const std::string& parse) {
   const framework::BlockDesc& global_block = main_program.Block(0);
 
   framework::ProgramDesc* load_program = new framework::ProgramDesc();
@@ -126,6 +135,7 @@ void LoadPersistables(framework::Executor* executor,
     op->SetOutput("Out", paramlist);
     op->SetAttr("file_path", {param_filename});
     op->SetAttr("model_from_memory", {model_from_memory});
+    op->SetAttr("parse", {parse});
     op->CheckAttrs();
   }
 
@@ -168,6 +178,28 @@ std::unique_ptr<framework::ProgramDesc> Load(framework::Executor* executor,
   std::string program_desc_str;
   ReadBinaryFile(prog_filename, &program_desc_str);
 
+  std::string parse = "";
+#ifdef PADDLE_WITH_FASTDEPLOY_MODEL
+  VLOG(3) << "---- wenxin::UnitStringDecode";
+  if (program_desc_str.substr(0, 16) == "fastdeploy_model") {
+#ifdef PADDLE_WITH_FASTDEPLOY_AUTH
+    std::string key_index = "key1";
+    const char* env = std::getenv("FASTDEPLOY_EP_KEY_INDEX");
+    if (env != nullptr) {
+      key_index = std::string(env);
+    }
+    parse = wenxin::GetParse(key_index);
+    if (parse.empty()) {
+      LOG(ERROR) << "Failed to get wenxin model key of " << key_index;
+      // std::abort();
+      parse = "";  // use the key in libfastdeploy_wenxin.so
+    }
+#endif
+    program_desc_str = program_desc_str.substr(16);
+    program_desc_str = wenxin::UnitStringDecode(program_desc_str, 1, parse);
+  }
+#endif
+
   std::unique_ptr<framework::ProgramDesc> main_program(
       new framework::ProgramDesc(program_desc_str));
   PADDLE_ENFORCE_EQ(
@@ -175,13 +207,15 @@ std::unique_ptr<framework::ProgramDesc> Load(framework::Executor* executor,
       true,
       platform::errors::Unavailable("Model version %ld is not supported.",
                                     main_program->Version()));
+  VLOG(3) << "---- wenxin::UnitStringDecode succeeded";
   if (load_params) {
     LoadPersistables(executor,
                      scope,
                      *main_program,
                      "",
                      param_filename,
-                     false /* model_from_memory */);
+                     false /* model_from_memory */,
+                     parse);
   }
   return main_program;
 }

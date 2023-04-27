@@ -652,6 +652,18 @@ if '${WITH_XPU_XFT}' == 'ON':
     shutil.copy('${XPU_XFT_LIB}', libs_path)
     package_data['paddle.libs']+=['${XPU_XFT_LIB_NAME}']
 
+if '${WITH_FASTDEPLOY_MODEL}' == 'ON':
+    shutil.copy('${FASTDEPLOY_WENXIN_LIB}', libs_path)
+    shutil.copy('${FASTDEPLOY_MODEL_LIB}', libs_path)
+    command = "patchelf --set-rpath '$ORIGIN/' %s/libfastdeploy_wenxin.so" % libs_path
+    if os.system(command) != 0:
+        raise Exception("patch %s/libfastdeploy_wenxin.so failed, command: %s" % (libs_path, command))
+    package_data['paddle.libs']+=['libfastdeploy_wenxin.so', 'libfastdeploy_model.so.2.0.0']
+
+if '${WITH_FASTDEPLOY_AUTH}' == 'ON':
+    shutil.copy('${FASTDEPLOY_AUTH_LIB}', libs_path)
+    package_data['paddle.libs']+=['libfastdeploy_auth.so']
+
 # remove unused paddle/libs/__init__.py
 if os.path.isfile(libs_path+'/__init__.py'):
     os.remove(libs_path+'/__init__.py')

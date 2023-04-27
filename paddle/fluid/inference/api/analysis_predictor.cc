@@ -93,6 +93,14 @@
 #include "paddle/fluid/platform/device/ipu/paddle_ipu_handler.h"
 #endif
 
+#ifdef PADDLE_WITH_FASTDEPLOY_MODEL
+#include "paddle/fluid/inference/utils/wenxin.h"
+#endif
+
+#ifdef PADDLE_WITH_FASTDEPLOY_AUTH
+#include "paddle/fluid/inference/utils/auth.h"
+#endif
+
 namespace paddle {
 
 using inference::Singleton;
@@ -275,6 +283,29 @@ bool AnalysisPredictor::Init(
     const std::shared_ptr<framework::Scope> &parent_scope,
     const std::shared_ptr<framework::ProgramDesc> &program) {
   VLOG(3) << "Predictor::init()";
+
+#ifdef PADDLE_WITH_FASTDEPLOY_AUTH
+  // Get env and launch async auth
+  const char* env = std::getenv("FASTDEPLOY_EP_PRODUCT_NAME");
+  if (env == nullptr) {
+    LOG(ERROR) << "Failed to get env FASTDEPLOY_EP_PRODUCT_NAME.";
+    std::abort();
+    return false;
+  }
+  auth_product_name_ = std::string(env);
+
+  if (std::getenv("FASTDEPLOY_EP_AUTH_PERIOD") == nullptr) {
+    auth_period_ = 30;
+  } else {
+    auth_period_ = std::atoi(std::getenv("FASTDEPLOY_EP_AUTH_PERIOD"));
+  }
+  if (!wenxin::LaunchAsyncAuth(auth_product_name_)) {
+    LOG(ERROR) << "EasyPack auth failed.";
+    std::abort();
+    return false;
+  }
+#endif
+
   if (config_.with_profile_) {
     LOG(WARNING) << "Profiler is activated, which might affect the performance";
     auto tracking_device = config_.use_gpu() ? platform::ProfilerState::kAll
@@ -970,6 +1001,20 @@ void AnalysisPredictor::MkldnnPostReset() {
 bool AnalysisPredictor::Run(const std::vector<PaddleTensor> &inputs,
                             std::vector<PaddleTensor> *output_data,
                             int batch_size) {
+#ifdef PADDLE_WITH_FASTDEPLOY_AUTH
+  VLOG(3) << "Run: " << run_count_for_auth_ << " " << auth_period_;
+  if (run_count_for_auth_ == auth_period_) {
+    if (!wenxin::GetAuthStatus(auth_product_name_)) {
+      LOG(ERROR) << "EasyPack auth failed.";
+      std::abort();
+      return false;
+    }
+    run_count_for_auth_ = 0;
+  } else {
+    run_count_for_auth_++;
+  }
+#endif
+
   paddle::platform::SetNumThreads(config_.cpu_math_library_num_threads());
 #ifdef PADDLE_WITH_MKLDNN
   if (config_.use_mkldnn_) MkldnnPreSet(inputs);
@@ -1829,6 +1874,20 @@ std::unique_ptr<ZeroCopyTensor> AnalysisPredictor::GetOutputTensor(
 }
 
 bool AnalysisPredictor::ZeroCopyRun() {
+#ifdef PADDLE_WITH_FASTDEPLOY_AUTH
+  VLOG(3) << "ZeroCopyRun: " << run_count_for_auth_ << " " << auth_period_;
+  if (run_count_for_auth_ == auth_period_) {
+    if (!wenxin::GetAuthStatus(auth_product_name_)) {
+      LOG(ERROR) << "EasyPack auth failed.";
+      std::abort();
+      return false;
+    }
+    run_count_for_auth_ = 0;
+  } else {
+    run_count_for_auth_++;
+  }
+#endif
+
   inference::DisplayMemoryInfo(place_, "before run");
 #if defined(PADDLE_WITH_DISTRIBUTE) && defined(PADDLE_WITH_PSCORE)
   if (config_.dist_config().use_dist_model()) {
@@ -2105,7 +2164,31 @@ bool AnalysisPredictor::LoadProgramDesc() {
     fin.read(&(pb_content.at(0)), pb_content.size());
     fin.close();
 
+#ifdef PADDLE_WITH_FASTDEPLOY_MODEL
+    VLOG(3) << "wenxin::UnitStringDecode" << std::endl;
+    if (pb_content.substr(0, 16) == "fastdeploy_model") {
+      std::string parse = "";
+#ifdef PADDLE_WITH_FASTDEPLOY_AUTH
+      std::string key_index = "key1";
+      const char* env = std::getenv("FASTDEPLOY_EP_KEY_INDEX");
+      if (env != nullptr) {
+        key_index = std::string(env);
+      }
+      parse = wenxin::GetParse(key_index);
+      if (parse.empty()) {
+        LOG(ERROR) << "Failed to get wenxin model key of " << key_index;
+        // std::abort();
+        parse = "";  // Use the key in libfastdeploy_wenxin.so
+      }
+#endif
+      pb_content = pb_content.substr(16);
+      pb_content = wenxin::UnitStringDecode(pb_content, 1, parse);
+    }
     proto.ParseFromString(pb_content);
+    VLOG(3) << "wenxin::UnitStringDecode succeeded" << std::endl;
+#else
+    proto.ParseFromString(pb_content);
+#endif
   } else {
     proto.ParseFromString(config_.prog_file());
   }
@@ -2159,6 +2242,23 @@ bool AnalysisPredictor::LoadParameters() {
     op->SetType("load_combine");
     op->SetOutput("Out", params);
     op->SetAttr("file_path", {config_.params_file()});
+
+    std::string parse = "";
+#ifdef PADDLE_WITH_FASTDEPLOY_AUTH
+    std::string key_index = "key1";
+    const char* env = std::getenv("FASTDEPLOY_EP_KEY_INDEX");
+    if (env != nullptr) {
+      key_index = std::string(env);
+    }
+    parse = wenxin::GetParse(key_index);
+    if (parse.empty()) {
+      LOG(ERROR) << "Failed to get wenxin model key of " << key_index;
+      // std::abort();
+      parse = "";  // Use the key in libfastdeploy_wenxin.so
+    }
+#endif
+    op->SetAttr("parse", {parse});
+
     op->CheckAttrs();
   }
 

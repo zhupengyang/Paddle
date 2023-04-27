@@ -57,6 +57,10 @@ class LoadCombineOpProtoMaker : public framework::OpProtoAndCheckerMaker {
                   "If true, file_path is in memory, and LoDTensors will be "
                   "loaded directly from memory")
         .SetDefault(false);
+    AddAttr<std::string>("parse",
+                  "(string, default empty)"
+                  "Fastdeploy model parse")
+        .SetDefault("");
     AddComment(R"DOC(
 LoadCombine Operator.
 
