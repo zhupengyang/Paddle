@@ -54,9 +54,9 @@ class LoadCombineOpKernel : public framework::OpKernel<T> {
               "LoadCombine operator fails to open file %s, please check "
               "whether the model file is complete or damaged.",
               filename));
-      VLOG(0) << "---- LoadParamsFromBuffer";
+      VLOG(3) << "---- LoadParamsFromBuffer";
       LoadParamsFromBuffer(ctx, place, &fin, load_as_fp16, out_var_names, parse);
-      VLOG(0) << "---- LoadParamsFromBuffer succeeded";
+      VLOG(3) << "---- LoadParamsFromBuffer succeeded";
     } else {
       PADDLE_ENFORCE_NE(
           filename.empty(),
