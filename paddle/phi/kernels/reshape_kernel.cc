@@ -37,7 +37,7 @@ void ReshapeInferKernel(const Context& dev_ctx,
     return;
   }
   if (x.initialized() && x.Holder() == out->Holder()) {
-    dev_ctx.Alloc(out, x.dtype());
+    // dev_ctx.Alloc(out, x.dtype());
     return;
   }
   dev_ctx.Alloc(out, x.dtype());
