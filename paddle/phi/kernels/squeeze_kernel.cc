@@ -26,10 +26,6 @@ void SqueezeInferKernel(const Context& dev_ctx,
                         const IntArray& axes,
                         DenseTensor* out) {
   auto out_dims = out->dims();
-  // for (int i=0; i < out_dims.size(); i++) {
-  //   printf("dims[%d] = %d\n", i, (int)out_dims[i]);
-  // }
-  // printf("out_nums: %d\n", (int)out->numel());
   if (x.initialized() && x.Holder() == out->Holder()) {
     return;
   }
