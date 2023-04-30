@@ -2012,6 +2012,10 @@ def assign(x, output=None):
             result2 = paddle.assign(data)  # result2 = [[2.5, 2.5], [2.5, 2.5], [2.5, 2.5]]
             result3 = paddle.assign(np.array([[2.5, 2.5], [2.5, 2.5], [2.5, 2.5]], dtype='float32')) # result3 = [[2.5, 2.5], [2.5, 2.5], [2.5, 2.5]]
     """
+    # speed up
+    if x is output and isinstance(x, Variable):
+        return x
+        
     input = x
     helper = LayerHelper('assign', **locals())
     check_type(
