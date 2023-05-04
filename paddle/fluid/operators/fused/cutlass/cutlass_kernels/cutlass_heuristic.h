@@ -14,11 +14,27 @@
  * limitations under the License.
  */
 
+/* Copyright (c) 2023 PaddlePaddle Authors. All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License. */
+
+
 #pragma once
 
 #include "paddle/fluid/operators/fused/cutlass/cutlass_extensions/ft_gemm_configs.h"
 
-namespace fastertransformer {
+namespace paddle {
+namespace operators {
 
 struct TileShape {
     int m;
@@ -41,7 +57,7 @@ static TileShape get_cta_shape_for_config(CutlassTileConfig tile_config)
         // {256, 128} have better performance than 128, 128
         case CutlassTileConfig::CtaShape128x256x64_WarpShape64x64x64:
             return TileShape{256, 128};
-        // TODO(wangbojun), CtaShape256x128x64_WarpShape64x64x64 is not a 
+        // TODO(wangbojun), CtaShape256x128x64_WarpShape64x64x64 is not a
         case CutlassTileConfig::CtaShape256x128x64_WarpShape64x64x64:
             return TileShape{256, 128};
         default:
@@ -89,7 +105,7 @@ static bool is_valid_split_k_factor(const int64_t   m,
     return true;
 }
 
-static std::vector<CutlassTileConfig> get_candidate_tiles(const bool is_weight_only, 
+static std::vector<CutlassTileConfig> get_candidate_tiles(const bool is_weight_only,
                                                    const bool is_weight_only_encoder,
                                                    const bool simt_configs_only)
 {
@@ -156,7 +172,10 @@ static CutlassGemmConfig estimate_best_config_from_occupancies(const std::vector
     int   config_waves   = INT_MAX;
     int   current_m_tile = 0;
 
-    const int max_split_k = n >= multi_processor_count * 256 ? 1 : split_k_limit;
+    // const int max_split_k = n >= multi_processor_count * 256 ? 1 : split_k_limit;
+    //TODO(wangbojun) max_split_k will have problem in bf16 gemm
+    
+    const int max_split_k = 1;
     for (int ii = 0; ii < candidate_configs.size(); ++ii) {
         CutlassGemmConfig candidate_config = candidate_configs[ii];
         TileShape         tile_shape       = get_cta_shape_for_config(candidate_config.tile_config);
@@ -215,5 +234,5 @@ static CutlassGemmConfig estimate_best_config_from_occupancies(const std::vector
 
     return best_config;
 }
-
-}  // namespace fastertransformer
+}  // namespace operators
+}  // namespace paddle

@@ -97,6 +97,7 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
                              sequence_lengths->data<int>(),
                              bsz,
                              seq_len);
+      if (token_num == 0) return;
       padding_offset_tensor.Resize({{token_num}});
       x_remove_padding.Resize({{token_num, dim_embed}});
       dev_ctx.Alloc<T>(&x_remove_padding, x_remove_padding.numel() * sizeof(T));
@@ -108,10 +109,7 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
                           dim_embed);
     } else {
       token_num = bsz_seq;
-    }
-
-    if (token_num == 0) {
-      return;
+      if (token_num == 0) return;
     }
 
     auto *padding_offset_data =
@@ -202,6 +200,28 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
       out_seq_len += time_step_value;
     } else {
       out_seq_len += cache_offset;
+    }
+
+    // whether to broadcast 2nd dimension for src_mask, default true
+    // if mask_broadcast_num_heads if False, which means src_mask shape
+    // will be:
+    // 1. [batch_size, num_head, seq_len, seq_len] for encoder
+    // 2. [batch_size, num_heads, 1, time_step+1] for decoder
+    // and do not need to broadcast num_heads dimension when calculating
+    // attn_mask offset in MHA
+    bool mask_broadcast_num_heads = true;
+    if (src_mask) {
+      if (src_mask->dims()[1] == 1) {
+        mask_broadcast_num_heads = true;
+      } else if (src_mask->dims()[1] == num_head) {
+        mask_broadcast_num_heads = false;
+      } else {
+        PADDLE_THROW(
+            platform::errors::InvalidArgument(
+              "Unknow dimension for attn_mask, the num_head(2nd) "
+              "dimension is invalid, it should be 1 or num_head(%d), "
+              "but got %d", num_head, src_mask->dims()[1]));
+      }
     }
 
     phi::DenseTensor q_transpose_out, kv_transpose_out, qk_out;
@@ -440,8 +460,10 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
                 dim_head,
                 src_mask->dims()[3] - 1,
                 rotary_emb_dims,
-                1. / sqrt(dim_head), 
-                true);
+                1. / sqrt(dim_head),
+                mask_broadcast_num_heads, 
+                compute_bias, 
+                /*neox_rotary_style*/false);
       } else if (cache_kv_out) {  // generation context stage
         const phi::DenseTensor *pre_cache_kv_tensor =
             pre_caches.size() > 0 ? pre_caches[i] : nullptr;
@@ -481,7 +503,8 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
                     bsz,
                     num_head,
                     seq_len,
-                    dim_head);
+                    dim_head, 
+                    /*neox_rotary_style*/false);
         }
 
         phi::DenseTensor *tmp_padding_offset_tensor =
@@ -516,7 +539,8 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
                                                       &attn_dropout_out,
                                                       &qktv_out,
                                                       &fmha_out,
-                                                      token_num);
+                                                      token_num,
+                                                      mask_broadcast_num_heads);
         }
         
         const T *k_ptr = nullptr;
@@ -588,7 +612,8 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
                     bsz,
                     num_head,
                     seq_len,
-                    dim_head);
+                    dim_head, 
+                    /*neox_rotary_style*/false);
         }
         phi::DenseTensor *tmp_padding_offset_tensor =
             encoder_remove_padding ? &padding_offset_tensor : nullptr;
@@ -654,9 +679,6 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
           AllReduce<T>(*buf0, ring_id, buf0->numel(), dev_ctx);
         }
       }
-      // cudaDeviceSynchronize();
-      // PADDLE_THROW(paddle::platform::errors::Fatal(
-      //     "Paddle debuge throw"));
 #ifdef _DEBUG_FUSED_MULTI_TRANSFORMER
       VLOG(0) << "step4";
 #endif
@@ -850,7 +872,6 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
     }
   }
 };
-
 
 
 }  // namespace operators

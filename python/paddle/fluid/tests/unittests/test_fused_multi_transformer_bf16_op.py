@@ -32,6 +32,20 @@ from paddle.nn.layer.transformer import _convert_attention_mask
 random.seed(42)
 default_main_program().random_seed = 42
 
+def apply_rotary(x, rot_emb):
+    """
+    Apply rotary into vector x.
+
+    Args:
+        x: [B, S, H, D]
+        rot_emb: [2, B, S, 1, D]
+
+    Returns:
+        rot_x: [B, S, H, D]
+    """
+    rotate_half_x = paddle.reshape(
+        paddle.stack([-x[:, :, :, 1::2], x[:, :, :, 0::2]], axis=-1), paddle.shape(x))
+    return x * rot_emb[0] + rotate_half_x * rot_emb[1]
 
 class TestFusedMultiTransformerOp(OpTest):
     def setUp(self):
@@ -145,12 +159,12 @@ class TestFusedMultiTransformerOp(OpTest):
         # False,        False,        not generation
         # True,         True,         generation context stage
         # True,         False,        generation decoder stage
-        self.has_cache_kv = False
+        self.has_cache_kv = True
         self.gen_cache_kv = False
         self.has_pre_cache = False
         self.rotary_embs = None
-        self.rotary_emb_dims = 0
-        self.use_glu = False
+        self.rotary_emb_dims = 1
+        self.use_glu = True
 
         self.remove_padding = False
 
@@ -159,16 +173,16 @@ class TestFusedMultiTransformerOp(OpTest):
         self.layers = 1
 
         self.batch_size = 1
-        self.query_length = 128
+        self.query_length = 1
         self.cache_length = 128
         self.pre_cache_num = 64
-        self.head_dim = 64
-        self.num_heads = 16
+        self.head_dim = 128
+        self.num_heads = 32
         self.embed_dim = self.head_dim * self.num_heads
 
         self.dropout_prob = 0.0
         self.attn_dropout_prob = 0.0
-        self.act_method = 'gelu'
+        self.act_method = 'swiglu'
         self.weight_attr = None
         self.bias_attr = None
         self.kdim, self.vdim = self.embed_dim, self.embed_dim
@@ -284,7 +298,39 @@ class TestFusedMultiTransformerOp(OpTest):
             self.attn_mask = None
 
         if self.rotary_emb_dims > 0:
-            self.rotary_emb = paddle.to_tensor(
+            self.cos_emb = paddle.cast(paddle.to_tensor(
+                np.random.uniform(
+                    -1,
+                    1,
+                    (
+                        1,
+                        self.batch_size,
+                        1,
+                        self.query_length,
+                        self.head_dim // 2,
+                        # self.head_dim // 2 // self.rotary_emb_dims,
+                    ),
+                ),
+                "float32",
+            ), "bfloat16")
+            self.sin_emb = paddle.cast(paddle.to_tensor(
+                np.random.uniform(
+                    -1,
+                    1,
+                    (
+                        1,
+                        self.batch_size,
+                        1,
+                        self.query_length,
+                        self.head_dim // 2,
+                        # self.head_dim // 2 // self.rotary_emb_dims,
+                    ),
+                ),
+                "float32",
+            ), "bfloat16")
+            cos_emb = paddle.stack([self.cos_emb, self.cos_emb], -1).reshape([1, self.batch_size, 1, self.query_length, self.head_dim])
+            sin_emb = paddle.stack([self.sin_emb, self.sin_emb], -1).reshape([1, self.batch_size, 1, self.query_length, self.head_dim])
+            self.rotary_embs = paddle.to_tensor(
                 np.random.uniform(
                     -1,
                     1,
@@ -293,16 +339,13 @@ class TestFusedMultiTransformerOp(OpTest):
                         self.batch_size,
                         1,
                         self.query_length,
-                        self.head_dim // 2 // self.rotary_emb_dims,
+                        self.head_dim,
                     ),
                 ),
-                self.x_type,
+                "bfloat16",
             )
-            concat_nums = 2 * self.rotary_emb_dims
-            rotary_embs = []
-            for _ in range(concat_nums):
-                rotary_embs.append(self.rotary_emb)
-            self.rotary_embs = np.concatenate(rotary_embs, -1)
+            self.rotary_embs[0] = cos_emb
+            self.rotary_embs[1] = sin_emb
 
         self.key, self.value = self.query, self.query
 
@@ -376,13 +419,11 @@ class TestFusedMultiTransformerOp(OpTest):
             v_out = tensor.transpose(x=v, perm=[0, 2, 1, 3])
 
             if self.rotary_emb_dims > 0:
-                cos_emb = rotary_embs[0]
-                sin_emb = rotary_embs[1]
-                q_out = self.apply_rotary_emb(
-                    q_out, cos_emb, sin_emb, self.rotary_emb_dims
+                q_out = apply_rotary(
+                    q_out, rotary_embs
                 )
-                k_out = self.apply_rotary_emb(
-                    k_out, cos_emb, sin_emb, self.rotary_emb_dims
+                k_out = apply_rotary(
+                    k_out, rotary_embs
                 )
 
             if self.has_cache_kv:

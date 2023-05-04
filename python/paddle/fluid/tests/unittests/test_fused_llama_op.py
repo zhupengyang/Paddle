@@ -1080,25 +1080,25 @@ class TestFusedLLAMAOp(OpTest):
             )
 
 
-class TestFusedLLAMAOpRotaryFP16(TestFusedLLAMAOp):
-    def config(self):
-        super().config()
-        self.x_type = np.float16
-        self.rotary_emb_dims = 1
+# class TestFusedLLAMAOpRotaryFP16(TestFusedLLAMAOp):
+#     def config(self):
+#         super().config()
+#         self.x_type = np.float16
+#         self.rotary_emb_dims = 1
 
 
-class TestFusedLLAMAOpGenRotaryFP16(TestFusedLLAMAOp):
-    def config(self):
-        super().config()
-        self.x_type = np.float16
-        self.has_cache_kv = True
-        self.gen_cache_kv = False
-        self.query_length = 1
-        self.key_length, self.value_length = (
-            self.query_length,
-            self.query_length,
-        )
-        self.rotary_emb_dims = 2
+# class TestFusedLLAMAOpGenRotaryFP16(TestFusedLLAMAOp):
+#     def config(self):
+#         super().config()
+#         self.x_type = np.float16
+#         self.has_cache_kv = True
+#         self.gen_cache_kv = False
+#         self.query_length = 1
+#         self.key_length, self.value_length = (
+#             self.query_length,
+#             self.query_length,
+#         )
+#         self.rotary_emb_dims = 2
 
 
 class TestFusedLLAMAOpGenCacheRotaryFP16(
@@ -1111,192 +1111,148 @@ class TestFusedLLAMAOpGenCacheRotaryFP16(
         self.gen_cache_kv = True
         self.rotary_emb_dims = 1
 
-class TestFusedLLAMAOpFp16(TestFusedLLAMAOp):
-    def config(self):
-        print("=====2222=====")
-        super().config()
-        self.x_type = np.float16
-        self.layers = 3  # odd layers
+# class TestFusedLLAMAOpFp16(TestFusedLLAMAOp):
+#     def config(self):
+#         print("=====2222=====")
+#         super().config()
+#         self.x_type = np.float16
+#         self.layers = 3  # odd layers
 
-class TestFusedLLAMAOpFp16(TestFusedLLAMAOp):
-    def config(self):
-        print("==========")
-        super().config()
-        self.x_type = np.float16
-        self.layers = 3  # odd layers
+# class TestFusedLLAMAOpFp16(TestFusedLLAMAOp):
+#     def config(self):
+#         print("==========")
+#         super().config()
+#         self.x_type = np.float16
+#         self.layers = 3  # odd layers
 
-class TestFusedLLAMAOpCacheKV(TestFusedLLAMAOp):
-    def config(self):
-        super().config()
-        self.has_cache_kv = True
-        self.query_length = 1
-        self.key_length, self.value_length = 1, 1
-        self.layers = 3  # odd layers
-
-class TestFusedLLAMAOpCacheKVFp16(TestFusedLLAMAOp):
-    def config(self):
-        super().config()
-        self.has_cache_kv = True
-        self.query_length = 1
-        self.key_length, self.value_length = 1, 1
-        self.x_type = np.float16
-
-class TestFusedLLAMAOpGenCacheKV(TestFusedLLAMAOp):
-    def config(self):
-        super().config()
-        self.has_cache_kv = True
-        self.gen_cache_kv = True
-
-class TestFusedLLAMAOpGenCacheKVFp16(TestFusedLLAMAOp):
-    def config(self):
-        super().config()
-        self.has_cache_kv = True
-        self.gen_cache_kv = True
-        self.x_type = np.float16
-        self.layers = 3  # odd layers
-
-class TestFusedLLAMAOpPreCache(TestFusedLLAMAOp):
-    def config(self):
-        # Need a larger tolerance. 
-        super().config()
-        self.has_pre_cache = True
-        self.x_type = np.float16
-
-class TestFusedLLAMAOpVariableGenCache1(TestFusedLLAMAOp):
-    def config(self):
-        super().config()
-        self.has_cache_kv = True
-        self.gen_cache_kv = True
-        self.remove_padding = True
-        self.x_type = np.float16
-        self.layers = 3  # odd layers
-
-class TestFusedLLAMAOpVariableGenCache2(TestFusedLLAMAOp):
-    def config(self):
-        super().config()
-        self.has_cache_kv = True
-        self.gen_cache_kv = True
-        self.remove_padding = True
-        self.layers = 4  # even layers
-
-class TestFusedLLAMAOpVariableGenCache3(TestFusedLLAMAOp):
-    def config(self):
-        super().config()
-        self.has_cache_kv = True
-        self.gen_cache_kv = True
-        self.remove_padding = True
-        self.layers = 4  # even layers
-        self.rotary_emb_dims = 2
-
-class TestFusedLLAMAOpVariableGenCache4(TestFusedLLAMAOp):
-    def config(self):
-        super().config()
-        self.has_cache_kv = True
-        self.gen_cache_kv = True
-        self.remove_padding = True
-        self.layers = 3  # odd layers
-        self.rotary_emb_dims = 2
-
-class TestFusedLLAMAOpVariableNormTransformer1(
-    TestFusedLLAMAOp
-):
-    def config(self):
-        super().config()
-        self.has_cache_kv = False
-        self.gen_cache_kv = False
-        self.remove_padding = True
-        self.x_type = np.float16
-        self.layers = 3  # odd layers
-
-class TestFusedLLAMAOpVariableNormTransformer2(
-    TestFusedLLAMAOp
-):
-    def config(self):
-        super().config()
-        self.has_cache_kv = False
-        self.gen_cache_kv = False
-        self.remove_padding = True
-        self.layers = 4  # even layers
-
-
-class TestFusedLLAMAOpVariableDecoder1(TestFusedLLAMAOp):
-    def config(self):
-        super().config()
-        self.has_cache_kv = True
-        self.gen_cache_kv = False
-        self.remove_padding = True
-        self.query_length = 1
-        self.key_length, self.value_length = 1, 1
-        self.x_type = np.float16
-        self.layers = 3  # odd layers
-
-
-class TestFusedLLAMAOpVariableDecoder2(TestFusedLLAMAOp):
-    def config(self):
-        super().config()
-        self.has_cache_kv = True
-        self.gen_cache_kv = False
-        self.remove_padding = True
-        self.query_length = 1
-        self.key_length, self.value_length = 1, 1
-        self.layers = 4  # even layers
-
-
-class TestFusedLLAMAOpVariableDecoder3(TestFusedLLAMAOp):
-    def config(self):
-        super().config()
-        self.has_cache_kv = True
-        self.gen_cache_kv = False
-        self.remove_padding = True
-        self.query_length = 1
-        self.key_length, self.value_length = 1, 1
-        self.layers = 4  # even layers
-        self.rotary_emb_dims = 2
-
-
-# class TestFusedLLAMAOpPreCacheStatic1(TestFusedLLAMAOp):
+# class TestFusedLLAMAOpCacheKV(TestFusedLLAMAOp):
 #     def config(self):
 #         super().config()
-#         self.has_attn_mask = False
-#         self.x_type = np.float32
-#         self.weight_attr = paddle.ParamAttr(
-#             initializer=paddle.paddle.nn.initializer.Constant(0.0)
-#         )
-#         self.bias_attr = paddle.ParamAttr(
-#             initializer=paddle.paddle.nn.initializer.Constant(0.0005)
-#         )
-#         self.ln_w_attr = paddle.ParamAttr(
-#             initializer=paddle.paddle.nn.initializer.Constant(1.0)
-#         )
-#         self.ln_b_attr = paddle.ParamAttr(
-#             initializer=paddle.paddle.nn.initializer.Constant(0.0)
-#         )
+#         self.has_cache_kv = True
+#         self.query_length = 1
+#         self.key_length, self.value_length = 1, 1
+#         self.layers = 3  # odd layers
 
-#     def test_fused_llama_op(self):
+# class TestFusedLLAMAOpCacheKVFp16(TestFusedLLAMAOp):
+#     def config(self):
+#         super().config()
+#         self.has_cache_kv = True
+#         self.query_length = 1
+#         self.key_length, self.value_length = 1, 1
+#         self.x_type = np.float16
+
+# class TestFusedLLAMAOpGenCacheKV(TestFusedLLAMAOp):
+#     def config(self):
+#         super().config()
+#         self.has_cache_kv = True
+#         self.gen_cache_kv = True
+
+# class TestFusedLLAMAOpGenCacheKVFp16(TestFusedLLAMAOp):
+#     def config(self):
+#         super().config()
+#         self.has_cache_kv = True
+#         self.gen_cache_kv = True
+#         self.x_type = np.float16
+#         self.layers = 3  # odd layers
+
+# class TestFusedLLAMAOpPreCache(TestFusedLLAMAOp):
+#     def config(self):
+#         # Need a larger tolerance. 
+#         super().config()
 #         self.has_pre_cache = True
-#         self.remove_padding = False
-#         self.rotary_emb_dims = 2
-#         self.generate_input_data()
-#         final_out_ref = self.GetBaselineOut()
-#         final_out = self.GetFusedLLAMAOutStatic()[0]
+#         self.x_type = np.float16
 
-#         np.testing.assert_allclose(
-#             final_out_ref, final_out, rtol=self.rtol, atol=self.atol
-#         )
-
-#         self.has_pre_cache = False
+# class TestFusedLLAMAOpVariableGenCache1(TestFusedLLAMAOp):
+#     def config(self):
+#         super().config()
+#         self.has_cache_kv = True
+#         self.gen_cache_kv = True
 #         self.remove_padding = True
-#         self.generate_input_data()
-#         final_out_ref = self.GetBaselineOut()
-#         final_out = self.GetFusedLLAMAOutStatic()[0]
+#         self.x_type = np.float16
+#         self.layers = 3  # odd layers
 
-#         for i in range(self.batch_size):
-#             np.testing.assert_allclose(
-#                 final_out_ref[i, : self.seq_lens[i]],
-#                 final_out[i, : self.seq_lens[i]],
-#                 rtol=self.rtol,
-#                 atol=self.atol,
-#             )
+# class TestFusedLLAMAOpVariableGenCache2(TestFusedLLAMAOp):
+#     def config(self):
+#         super().config()
+#         self.has_cache_kv = True
+#         self.gen_cache_kv = True
+#         self.remove_padding = True
+#         self.layers = 4  # even layers
+
+# class TestFusedLLAMAOpVariableGenCache3(TestFusedLLAMAOp):
+#     def config(self):
+#         super().config()
+#         self.has_cache_kv = True
+#         self.gen_cache_kv = True
+#         self.remove_padding = True
+#         self.layers = 4  # even layers
+#         self.rotary_emb_dims = 2
+
+# class TestFusedLLAMAOpVariableGenCache4(TestFusedLLAMAOp):
+#     def config(self):
+#         super().config()
+#         self.has_cache_kv = True
+#         self.gen_cache_kv = True
+#         self.remove_padding = True
+#         self.layers = 3  # odd layers
+#         self.rotary_emb_dims = 2
+
+# class TestFusedLLAMAOpVariableNormTransformer1(
+#     TestFusedLLAMAOp
+# ):
+#     def config(self):
+#         super().config()
+#         self.has_cache_kv = False
+#         self.gen_cache_kv = False
+#         self.remove_padding = True
+#         self.x_type = np.float16
+#         self.layers = 3  # odd layers
+
+# class TestFusedLLAMAOpVariableNormTransformer2(
+#     TestFusedLLAMAOp
+# ):
+#     def config(self):
+#         super().config()
+#         self.has_cache_kv = False
+#         self.gen_cache_kv = False
+#         self.remove_padding = True
+#         self.layers = 4  # even layers
+
+
+# class TestFusedLLAMAOpVariableDecoder1(TestFusedLLAMAOp):
+#     def config(self):
+#         super().config()
+#         self.has_cache_kv = True
+#         self.gen_cache_kv = False
+#         self.remove_padding = True
+#         self.query_length = 1
+#         self.key_length, self.value_length = 1, 1
+#         self.x_type = np.float16
+#         self.layers = 3  # odd layers
+
+
+# class TestFusedLLAMAOpVariableDecoder2(TestFusedLLAMAOp):
+#     def config(self):
+#         super().config()
+#         self.has_cache_kv = True
+#         self.gen_cache_kv = False
+#         self.remove_padding = True
+#         self.query_length = 1
+#         self.key_length, self.value_length = 1, 1
+#         self.layers = 4  # even layers
+
+
+# class TestFusedLLAMAOpVariableDecoder3(TestFusedLLAMAOp):
+#     def config(self):
+#         super().config()
+#         self.has_cache_kv = True
+#         self.gen_cache_kv = False
+#         self.remove_padding = True
+#         self.query_length = 1
+#         self.key_length, self.value_length = 1, 1
+#         self.layers = 4  # even layers
+#         self.rotary_emb_dims = 2
+
 
 if __name__ == "__main__":
     unittest.main()

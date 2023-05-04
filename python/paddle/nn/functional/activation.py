@@ -980,7 +980,7 @@ def silu(x, name=None):
         return _C_ops.silu(x)
     else:
         check_variable_and_dtype(
-            x, 'x', ['float16', 'float32', 'float64'], 'silu'
+            x, 'x', ['uint16', 'float16', 'float32', 'float64'], 'silu'
         )
         helper = LayerHelper("silu", **locals())
         out = helper.create_variable_for_type_inference(x.dtype)
@@ -1110,13 +1110,13 @@ def softmax(x, axis=-1, dtype=None, name=None):
         use_cudnn = True
         if dtype is None:
             check_variable_and_dtype(
-                x, 'x', ['float16', 'bfloat16', 'float32', 'float64'], 'softmax'
+                x, 'x', ['uint16', 'float16', 'bfloat16', 'float32', 'float64'], 'softmax'
             )
         else:
             check_dtype(
                 dtype,
                 'dtype',
-                ['float16', 'bfloat16', 'float32', 'float64'],
+                ['uint16', 'float16', 'bfloat16', 'float32', 'float64'],
                 'softmax',
                 'If dtype is not None, it only support float16, bfloat16, float32 or float64.',
             )
