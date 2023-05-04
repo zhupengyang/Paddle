@@ -356,8 +356,7 @@ class FusedMultiTransformerINT8OpKernel : public framework::OpKernel<T> {
                 num_head,
                 dim_head,
                 time_step->data<int>()[0],
-                1. / sqrt(dim_head), 
-                true);
+                1. / sqrt(dim_head));
       } else if (cache_kv_out) {  // generation context stage
         // TODO(wangxi): can remove dropout in inference
         fmha_compute.ComputeForward(qkv_out,
