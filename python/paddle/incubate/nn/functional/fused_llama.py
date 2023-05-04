@@ -45,7 +45,7 @@ def fused_llama(
     attn_mask=None,
     dropout_rate=0.0,
     rotary_emb_dims=0,
-    activation="gelu",
+    activation="swiglu",
     training=False,
     mode='upscale_in_train',
     trans_qkvw=True,

@@ -215,13 +215,13 @@ class FusedLLAMAOpOpMaker
         });
 
     AddAttr<std::string>("act_method", "act_method")
-        .SetDefault("gelu")
+        .SetDefault("swiglu")
         .AddCustomChecker([](const std::string &act_type) {
           PADDLE_ENFORCE_EQ(
-              act_type == "gelu" || act_type == "geglu" || act_type == "swiglu" || act_type == "relu" || act_type == "none",
+              act_type == "swiglu",
               true,
               platform::errors::InvalidArgument(
-                  "Only support `gelu`, `geglu`, `swiglu`, `relu`, `none` activation in "
+                  "Only support `swiglu` in "
                   "FusedLLAMA. "));
         });
 

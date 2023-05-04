@@ -193,7 +193,7 @@ class FusedLLAMA(Layer):
                 default_initializer=Constant(1.0),
             )
             ffn1_weight = self.create_parameter(
-                shape=[embed_dim, dim_feedforward],
+                shape=[embed_dim, dim_feedforward * 2], # Since LLAMA use GLU Arch, we need double the dimension. 
                 attr=ffn1_weight_attr,
                 dtype=self._dtype,
                 is_bias=False,
@@ -277,7 +277,6 @@ class FusedLLAMA(Layer):
         out = incubate_f.fused_llama(
             src,
             self.ln_scales,
-            self.ln_biases,
             self.qkv_weights,
             self.linear_weights,
             self.ffn_ln_scales,

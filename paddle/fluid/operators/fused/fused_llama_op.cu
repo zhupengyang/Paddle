@@ -22,6 +22,11 @@ limitations under the License. */
 
 #include<algorithm>
 
+/*
+This Operator Only used for LLAMA Inference. 
+
+LLAMA use PreLayerNorm, gpt-neox style rotary embedding, SwiGLU, so we only support this pattern. 
+*/
 
 DECLARE_bool(use_cutlass_fmha); 
 DECLARE_int64(custom_allreduce_one_shot_threshold);
@@ -72,8 +77,6 @@ class FusedLLAMAOpKernel : public framework::OpKernel<T> {
     const std::string act_method = ctx.Attr<std::string>("act_method");
 
     // Note(Zhengzekang): LLAMA use pre layernorm architecture. 
-    // bool pre_layer_norm = true; 
-
     bool remove_padding = false;
     auto *sequence_lengths = ctx.Input<phi::DenseTensor>("SeqLengths");
     if (sequence_lengths) {
@@ -114,8 +117,6 @@ class FusedLLAMAOpKernel : public framework::OpKernel<T> {
     } else {
       token_num = bsz_seq;
     }
-    printf("Token num is: %d \n", token_num); 
-
     if (token_num == 0) {
       return;
     }
@@ -376,6 +377,8 @@ class FusedLLAMAOpKernel : public framework::OpKernel<T> {
       }
 #ifdef _DEBUG_FUSED_MULTI_TRANSFORMER
       VLOG(0) << "step1";
+      VLOG(0) << "ln_scale_data" << *ln_scales[i];
+      VLOG(0) << "token_num: " << token_num << ", dim_embed" << dim_embed;
       VLOG(0) << "rmsnorm 1_out:" << *buf1;
 #endif
 
@@ -387,6 +390,7 @@ class FusedLLAMAOpKernel : public framework::OpKernel<T> {
 
 #ifdef _DEBUG_FUSED_MULTI_TRANSFORMER
       VLOG(0) << "step2";
+      VLOG(0) << "QKV Weight: " << *qkv_weights[i]; 
       VLOG(0) << "qkv_out:" << qkv_out;
 #endif
 
@@ -396,8 +400,6 @@ class FusedLLAMAOpKernel : public framework::OpKernel<T> {
       phi::DenseTensor *cache_kv_out = cache_kv ? cache_kv_outs[i] : nullptr;
 
       if (time_step) {  // generation decoder stage
-        printf("====== generation decode ===== \n"); 
-
         // [2, batch_size, num_head, max_seq_len, head_size]
         int max_seq_len = cache_kv->dims()[3];
         fmha<T>(dev_ctx,
@@ -416,9 +418,8 @@ class FusedLLAMAOpKernel : public framework::OpKernel<T> {
                 rotary_emb_dims,
                 1. / sqrt(dim_head), 
                 false);
+        VLOG(0) << "fmha result" << fmha_out; 
       } else if (cache_kv_out) {  // generation context stage
-        printf("====== generation context ===== \n"); 
-
         const phi::DenseTensor *pre_cache_kv_tensor =
             pre_caches.size() > 0 ? pre_caches[i] : nullptr;
         phi::DenseTensor *pre_cache_kv_out_tmp =
@@ -533,7 +534,6 @@ class FusedLLAMAOpKernel : public framework::OpKernel<T> {
                           max_seq_len,
                           dim_head);
       } else {  // not generation
-        printf("====== not generation ===== \n"); 
         // TODO(wangxi): can remove dropout in inference
         qkv_bias_add_transpose_split<T>(dev_ctx,
                                         q_transpose_out_data,
@@ -623,6 +623,8 @@ class FusedLLAMAOpKernel : public framework::OpKernel<T> {
       
 #ifdef _DEBUG_FUSED_MULTI_TRANSFORMER
       VLOG(0) << "step4";
+      VLOG(0) << "Attn OutProject weight:" << *out_linear_weights[i];
+      VLOG(0) << "Attn OutProject Out:" << *buf1;
 #endif
 
       // step5. ln(residual + dropout(input + bias))
@@ -640,6 +642,7 @@ class FusedLLAMAOpKernel : public framework::OpKernel<T> {
 
 #ifdef _DEBUG_FUSED_MULTI_TRANSFORMER
       VLOG(0) << "step5";
+      VLOG(0) << "ResidualAdd RMSNORM weight: " << *ffn_ln_scales[i];
       VLOG(0) << "ffn1_input:" << *buf1;
 #endif
 
@@ -706,6 +709,7 @@ class FusedLLAMAOpKernel : public framework::OpKernel<T> {
 #ifdef _DEBUG_FUSED_MULTI_TRANSFORMER
       VLOG(0) << "step9";
       VLOG(0) << "residual_out:" << *buf1;
+      VLOG(0) << "ResidualRMSNorm out:" << *buf0;
 #endif
       x_data = buf1->data<T>();
       std::swap(buf0, buf1);
@@ -720,8 +724,6 @@ class FusedLLAMAOpKernel : public framework::OpKernel<T> {
     }
   }
 };
-
-
 
 }  // namespace operators
 }  // namespace paddle
