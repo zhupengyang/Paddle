@@ -50,6 +50,65 @@ void print_tensor(const T *t, int size, const char *name) {
   out_txt_file.close();
 }
 
+
+inline float fp32_from_bits(uint32_t w) {
+#if defined(__OPENCL_VERSION__)
+  return as_float(w);
+#elif defined(__CUDA_ARCH__)
+  return __uint_as_float((unsigned int)w);
+#elif defined(__INTEL_COMPILER)
+  return _castu32_f32(w);
+#else
+  union {
+    uint32_t as_bits;
+    float as_value;
+  } fp32 = {w};
+  return fp32.as_value;
+#endif
+}
+
+inline uint32_t fp32_to_bits(float f) {
+#if defined(__OPENCL_VERSION__)
+  return as_uint(f);
+#elif defined(__CUDA_ARCH__)
+  return (uint32_t)__float_as_uint(f);
+#elif defined(__INTEL_COMPILER)
+  return _castf32_u32(f);
+#else
+  union {
+    float as_value;
+    uint32_t as_bits;
+  } fp32 = {f};
+  return fp32.as_bits;
+#endif
+}  
+
+float CPUHalfConvert2Float(const uint16_t h){
+  const uint32_t w = (uint32_t)h << 16;
+  const uint32_t sign = w & UINT32_C(0x80000000);
+  const uint32_t two_w = w + w;
+
+  constexpr uint32_t exp_offset = UINT32_C(0xE0) << 23;
+  // const float exp_scale = 0x1.0p-112f;
+  constexpr uint32_t scale_bits = (uint32_t)15 << 23;
+  float exp_scale_val;
+  std::memcpy(&exp_scale_val, &scale_bits, sizeof(exp_scale_val));
+  const float exp_scale = exp_scale_val;
+  const float normalized_value =
+      fp32_from_bits((two_w >> 4) + exp_offset) * exp_scale;
+
+  constexpr uint32_t magic_mask = UINT32_C(126) << 23;
+  constexpr float magic_bias = 0.5f;
+  const float denormalized_value =
+      fp32_from_bits((two_w >> 17) | magic_mask) - magic_bias;
+
+  constexpr uint32_t denormalized_cutoff = UINT32_C(1) << 27;
+  const uint32_t result = sign |
+      (two_w < denormalized_cutoff ? fp32_to_bits(denormalized_value)
+                                   : fp32_to_bits(normalized_value));
+  return fp32_from_bits(result);
+}
+
 template <typename T>
 static void PrintMatrix(const T* mat_d, int num, std::string name) {
   // if (FLAGS_cublaslt_exhaustive_search_times != 114514) return;
@@ -67,6 +126,23 @@ static void PrintMatrix(const T* mat_d, int num, std::string name) {
       } else {
         ss << std::setprecision(8) << (float)(tmp[i]) << std::endl;
       }
+    }
+    outfile << ss.str();
+    outfile.close();
+}
+
+static void PrintHalfMatrix(const void* mat_d_ptr, int num, std::string name) {
+    VLOG(0) << "PRINT HALF MATRIX Num is: " << num; 
+    const uint16_t* mat_d = reinterpret_cast<const uint16_t*>(mat_d_ptr);
+    std::vector<uint16_t> tmp(num);
+    cudaMemcpy(tmp.data(), mat_d, sizeof(uint16_t) * num, cudaMemcpyDeviceToHost);
+
+    std::ofstream outfile;
+    outfile.open(name+".txt", std::ios::out);
+    std::stringstream ss;
+
+    for (int i = 0; i < num; ++i) {
+      ss << std::setprecision(8) << CPUHalfConvert2Float(tmp[i]) << std::endl;
     }
     outfile << ss.str();
     outfile.close();
@@ -170,10 +246,11 @@ struct Masked_multihead_attention_params {
 
   const int *sequence_lengths{nullptr};
 
-  // The RoPE embedding, [2, B, 1, 1, dim_head]
+  // The RoPE embedding, [2, B, rotary_seq_len, 1, dim_head]
   // rotary_emb_dims = 1 if pos_ids_extra is null else 2
   const T *rotary_emb;
   int rotary_emb_dims;
+  int rotary_seq_len = 1; 
 
   int batch_size;
   int num_head;
@@ -764,6 +841,7 @@ __global__ void masked_multihead_attention_kernel(
 
   // FIXME(wangxi): need add 1.e-6f?
   float inv_sum = __fdividef(1.f, sum + 1.e-6f);
+
   for (int ti = tid; ti <= act_time_step; ti += THREADS_PER_BLOCK) {
     convert_from_float(logits_smem[ti], qk_smem[ti] * inv_sum);
   }
@@ -1051,6 +1129,85 @@ void fmha(const phi::GPUContext &dev_ctx,
           add_qkv_bias, 
           neox_rotary_style);
 }
+
+// template <typename T>
+// void llama_fmha(const phi::GPUContext &dev_ctx,
+//                 const phi::DenseTensor &qkv_tensor,
+//                 const phi::DenseTensor &qkv_bias_tensor,
+//                 const phi::DenseTensor &src_mask_tensor,
+//                 const phi::DenseTensor *sequence_lengths_tensor,
+//                 const phi::DenseTensor *rotary_tensor,
+//                 phi::DenseTensor *cache_kv_tensor,
+//                 phi::DenseTensor *out_tensor,
+//                 int batch_size,
+//                 int max_seq_length,
+//                 int num_head,
+//                 int dim_head,
+//                 int timestep,
+//                 int rotary_emb_dims,
+//                 int rotary_seq_len, 
+//                 float inv_sqrt_dh,
+//                 const bool mask_broadcast_num_heads = true, 
+//                 const bool add_qkv_bias = true, 
+//                 const bool neox_rotary_style = false){
+//   Masked_multihead_attention_params<T> params;
+//   params.out = out_tensor->data<T>();
+//   params.qkv = qkv_tensor.data<T>();
+//   params.neox_rotary_style = neox_rotary_style; 
+//   params.rotary_seq_len = rotary_seq_len; 
+//   params.add_qkv_bias = add_qkv_bias; 
+//   if(add_qkv_bias){
+//     // Because we may not add qkv_bias, so here we cast to T*. Author(zhengzekang). 
+//     params.qkv_bias = const_cast<T*>(qkv_bias_tensor.data<T>());
+//   }
+//   params.attn_mask = src_mask_tensor.data<T>();
+//   params.mask_broadcast_num_heads = mask_broadcast_num_heads;
+//   params.cache_kv = cache_kv_tensor->data<T>();
+
+//   if (sequence_lengths_tensor) {
+//     params.sequence_lengths = sequence_lengths_tensor->data<int>();
+//   }
+
+//   if (rotary_emb_dims > 0) {
+//     params.rotary_emb = rotary_tensor->data<T>();
+//   } else {
+//     params.rotary_emb = nullptr;
+//   }
+
+//   params.batch_size = batch_size;
+//   params.num_head = num_head;
+//   params.timestep = timestep;
+//   params.max_seq_length = max_seq_length;
+//   params.inv_sqrt_dh = inv_sqrt_dh;
+//   params.rotary_emb_dims = rotary_emb_dims;
+
+//   switch (dim_head) {
+//     case 10:
+//       fmha_launch_kernel<T, 10, 32>(params, dev_ctx.stream());
+//       break;
+//     case 26:
+//       fmha_launch_kernel<T, 26, 32>(params, dev_ctx.stream());
+//       break;
+//     case 32:
+//       fmha_launch_kernel<T, 32, 32>(params, dev_ctx.stream());
+//       break;
+//     case 64:
+//       fmha_launch_kernel<T, 64, 64>(params, dev_ctx.stream());
+//       break;
+//     case 96:
+//       fmha_launch_kernel<T, 96, 128>(params, dev_ctx.stream());
+//       break;
+//     case 128:
+//       fmha_launch_kernel<T, 128, 128>(params, dev_ctx.stream());
+//       break;
+//     case 192:
+//       fmha_launch_kernel<T, 192, 256>(params, dev_ctx.stream());
+//       break;
+//     default:
+//       PADDLE_THROW(platform::errors::Unimplemented(
+//           "Dim_head = %d is unsupport!", dim_head));
+//   }
+// }
 
 // NOTE: simd with 16Bytes(128bit), float is 4, float16 is 8
 constexpr int VEC_16B = 16;
@@ -1344,20 +1501,23 @@ __global__ void NeoXRotaryKernel(const T *input,
   int si = blockIdx.z;
   if (sequence_lengths && si >= sequence_lengths[bi] * rotary_emb_dims) return;
   int half_lastdim = last_dim / 2;
-  // Note(ZhenyuLi): Calculate the relevant data at one time, so that no
-  // additional space is required.
   for (int ti = threadIdx.x; ti < half_lastdim; ti += blockDim.x) {
     int base_idx = bi * head_num * seq_len * last_dim +
                    hi * seq_len * last_dim + si * last_dim;
     int left_idx = base_idx + ti;
     const int right_idx = base_idx + ti + half_lastdim;
-    int emb_idx = bi * seq_len * last_dim + si * last_dim + ti;
+    int emb_idx_left = bi * seq_len * last_dim + si * last_dim + ti;
+    int emb_idx_right = bi * seq_len * last_dim + si * last_dim + ti + half_lastdim;
     T input_left = input[left_idx];
     T input_right = input[right_idx];
-    T cos_tmp = cos_emb[emb_idx];
-    T sin_tmp = sin_emb[emb_idx];
-    T res1 = input_left * cos_tmp - input_right * sin_tmp;
-    T res2 = input_right * cos_tmp + input_left * sin_tmp;
+
+    T cos_tmp_left = cos_emb[emb_idx_left];
+    T sin_tmp_left = sin_emb[emb_idx_left];
+    T cos_tmp_right = cos_emb[emb_idx_right];
+    T sin_tmp_right = sin_emb[emb_idx_right];
+
+    T res1 = input_left * cos_tmp_left - input_right * sin_tmp_left;
+    T res2 = input_right * cos_tmp_right + input_left * sin_tmp_right;
     output[left_idx] = res1;
     output[right_idx] = res2;
   }
@@ -1419,6 +1579,7 @@ void rotary_qk(const phi::GPUContext &dev_ctx,
   // seq_len * rotary_emb_dims, dim_head / rotary_emb_dims] rotary_emb [2, bs,
   // 1, seq_len, dim_head] -> [2, bs, 1, seq_len * rotary_emb_dims, dim_head /
   // rotary_emb_dims]
+  VLOG(0) << " B: " << batch_size << " S: " << seq_len << " Headnum: "<<head_num << " dim head: " << dim_head; 
   dim3 grid(batch_size, head_num, seq_len * rotary_emb_dims);
   const int last_dim = dim_head / rotary_emb_dims;
   auto getBlockSize = [](int dim) {
@@ -1485,6 +1646,98 @@ void rotary_qk(const phi::GPUContext &dev_ctx,
       last_dim);
   }
 }
+
+
+template <typename T>
+void llama_rotary_qk(const phi::GPUContext &dev_ctx,
+               T *q,
+               T *k,              // kv
+               const T *q_input,  // q
+               const T *k_input,  // kv
+               const T *rotary_emb,
+               const int *sequence_lengths,
+               const int rotary_emb_dims,
+               const int batch_size,
+               const int head_num,
+               const int seq_len,
+               const int dim_head, 
+               const int rotary_seq_len, 
+               const bool neox_rotary_style) {
+  // q_transpose_out_data [bs, head_num, seq_len, dim_head] -> [bs, head_num,
+  // seq_len * rotary_emb_dims, dim_head / rotary_emb_dims]
+  // kv_transpose_out_data [bs, head_num, seq_len, dim_head] -> [bs, head_num,
+  // seq_len * rotary_emb_dims, dim_head / rotary_emb_dims] rotary_emb [2, bs,
+  // 1, seq_len, dim_head] -> [2, bs, 1, seq_len * rotary_emb_dims, dim_head /
+  // rotary_emb_dims]
+  VLOG(0) << " B: " << batch_size << " S: " << seq_len << " Headnum: "<<head_num << " dim head: " << dim_head; 
+  VLOG(0) << "Rotary seq len: " << rotary_seq_len; 
+  dim3 grid(batch_size, head_num, seq_len * rotary_emb_dims);
+  const int last_dim = dim_head / rotary_emb_dims;
+  auto getBlockSize = [](int dim) {
+    if (dim > 256) {
+      return 512;
+    } else if (dim > 128) {
+      return 256;
+    } else if (dim > 64) {
+      return 128;
+    } else if (dim > 32) {
+      return 64;
+    } else {
+      return 32;
+    }
+  };
+  int BlockSize = getBlockSize(last_dim / 2);
+  const T *cos_emb = rotary_emb;
+  const T *sin_emb = rotary_emb + batch_size * seq_len * dim_head;
+  if(!neox_rotary_style){
+    RotaryKernel<<<grid, BlockSize, 0, dev_ctx.stream()>>>(
+      q_input,
+      cos_emb,
+      sin_emb,
+      sequence_lengths,
+      q,
+      rotary_emb_dims,
+      batch_size,
+      head_num,
+      seq_len * rotary_emb_dims,
+      last_dim);
+    RotaryKernel<<<grid, BlockSize, 0, dev_ctx.stream()>>>(
+      k_input,
+      cos_emb,
+      sin_emb,
+      sequence_lengths,
+      k,
+      rotary_emb_dims,
+      batch_size,
+      head_num,
+      seq_len * rotary_emb_dims,
+      last_dim);
+  } else {
+    NeoXRotaryKernel<<<grid, BlockSize, 0, dev_ctx.stream()>>>(
+      q_input,
+      cos_emb,
+      sin_emb,
+      sequence_lengths,
+      q,
+      rotary_emb_dims,
+      batch_size,
+      head_num,
+      seq_len * rotary_emb_dims,
+      last_dim);
+    NeoXRotaryKernel<<<grid, BlockSize, 0, dev_ctx.stream()>>>(
+      k_input,
+      cos_emb,
+      sin_emb,
+      sequence_lengths,
+      k,
+      rotary_emb_dims,
+      batch_size,
+      head_num,
+      seq_len * rotary_emb_dims,
+      last_dim);
+  }
+}
+
 
 __global__ void GetPaddingOffset(int *d_token_num,
                                  int *padding_offset,
@@ -1769,7 +2022,8 @@ class FFNGluDyquantHelper {
                                        <<" dim_embed_:" <<dim_embed_;
     if (gemm_method_ == "weight-only") {
       VLOG(5) << "do weight-only gemm";
-      mixed_gemm_runner_->gemm_bias_act(
+      if(bias){
+        mixed_gemm_runner_->gemm_bias_act(
           reinterpret_cast<const typename PDDataTypeTraits<T>::DataType *>(
               input->data<T>()),
           reinterpret_cast<const uint8_t *>(weight->data<int8_t>()),
@@ -1784,6 +2038,19 @@ class FFNGluDyquantHelper {
           reinterpret_cast<char *>(workspace->data<uint8_t>()),
           workspace->numel(),
           dev_ctx_.stream());
+      } else {
+        mixed_gemm_runner_->gemm(
+          reinterpret_cast<const typename PDDataTypeTraits<T>::DataType *>(input->data<T>()),
+          reinterpret_cast<const uint8_t *>(weight->data<int8_t>()),
+          scale->data<float>(),
+          reinterpret_cast<typename PDDataTypeTraits<T>::DataType *>(bias_out->data<T>()),
+          token_num_,
+          dim_ffn_,
+          dim_embed_,
+          reinterpret_cast<char *>(workspace->data<uint8_t>()),
+          workspace->numel(),
+          dev_ctx_.stream());
+      }
       VLOG(5) << "input:" << *input;
       VLOG(5) << "output:" << *bias_out;
     } else if (gemm_method_ == "LLM.int8") {

@@ -28,6 +28,7 @@ This Operator Only used for LLAMA Inference.
 LLAMA use PreLayerNorm, gpt-neox style rotary embedding, SwiGLU, so we only support this pattern. 
 */
 
+// #define _DEBUG_FUSED_MULTI_TRANSFORMER
 DECLARE_bool(use_cutlass_fmha); 
 DECLARE_int64(custom_allreduce_one_shot_threshold);
 DECLARE_int64(custom_allreduce_two_shot_threshold);
@@ -75,6 +76,9 @@ class FusedLLAMAOpKernel : public framework::OpKernel<T> {
     int dim_embed = input_x_dims[2];
     int bsz_seq = bsz * seq_len;
     const std::string act_method = ctx.Attr<std::string>("act_method");
+
+    // whether do weight only quant
+    bool quant_weight = ctx.Attr<bool>("quant_weight");
 
     // Note(Zhengzekang): LLAMA use pre layernorm architecture. 
     bool remove_padding = false;
@@ -137,6 +141,7 @@ class FusedLLAMAOpKernel : public framework::OpKernel<T> {
     // x: qkv's input [batch_size, seq_len, dim_embed]
     // y: qkv's weight: [3, num_head, dim_head, dim_embed]
     auto qkv_weights = ctx.MultiInput<phi::DenseTensor>("QKVW");
+    auto qkv_weights_scales = ctx.MultiInput<phi::DenseTensor>("QKVWScale");
     const bool trans_qkvw = ctx.Attr<bool>("trans_qkvw");
     const auto qkv_w_dims = qkv_weights[0]->dims();
     int num_head = trans_qkvw ? qkv_w_dims[1] : qkv_w_dims[2];
@@ -150,6 +155,12 @@ class FusedLLAMAOpKernel : public framework::OpKernel<T> {
     // (transA, transB, qkv_compute_bias) = (false, trans_qkvw, false)
     // Since we fused QKVBias into QKVBiasAddTransposeSplit kernel, here we
     // set qkv_compute_bias as false.
+
+    if(trans_qkvw){
+      VLOG(0) << "TRANS QKVW"; 
+    } 
+    VLOG(0) << "outputsize " << output_size << " input_size " << input_size << " tokennum " << token_num; 
+
     auto qkv_compute = AttnMatMul<T>(dev_ctx,
                                      false,
                                      trans_qkvw,
@@ -157,6 +168,8 @@ class FusedLLAMAOpKernel : public framework::OpKernel<T> {
                                      output_size,
                                      input_size,
                                      /*qkv_compute_bias=*/qkv_compute_bias);
+    auto mixed_gemm_runner = paddle::operators::CutlassFpAIntBGemmRunner<typename PDDataTypeTraits<T>::DataType, uint8_t>();
+
     phi::DenseTensor qkv_out;
     qkv_out.Resize({{token_num, 3, num_head, dim_head}});
     auto *qkv_out_data =
@@ -284,6 +297,7 @@ class FusedLLAMAOpKernel : public framework::OpKernel<T> {
 
     // 4. out_linear
     auto out_linear_weights = ctx.MultiInput<phi::DenseTensor>("OutLinearW");
+    auto out_linear_weights_scales = ctx.MultiInput<phi::DenseTensor>("OutLinearWScale");
     int ring_id = ctx.Attr<int>("ring_id");
     auto *custom_comm = GetCustomNCCLComm(dev_ctx, ring_id);
     // (transA, transB, qkv_compute_bias) = (false, false, false)
@@ -304,15 +318,32 @@ class FusedLLAMAOpKernel : public framework::OpKernel<T> {
 
     // 6. ffn matmul1. LLAMA use swiGLU. Author(zhengzekang)
     auto ffn1_weights = ctx.MultiInput<phi::DenseTensor>("FFN1Weight");
+    auto ffn1_weights_scales = ctx.MultiInput<phi::DenseTensor>("FFN1WeightScale");
     auto ffn1_weight_dim = ffn1_weights[0]->dims();
     int dim_ffn = ffn1_weight_dim[1];
     FFNGluHelper<T> ffn1_glu_helper(
         dev_ctx, "swiglu", token_num, dim_ffn / 2, dim_ffn, dim_embed);
+    
+    FFNGluDyquantHelper<T> ffn1_glu_dyquant_helper(
+        dev_ctx, "swiglu", token_num, dim_ffn / 2, dim_ffn, dim_embed, "weight-only", &mixed_gemm_runner);
 
     phi::DenseTensor ffn1_out;
     ffn1_out.Resize({{token_num, dim_ffn}});
     auto *ffn1_out_data =
         dev_ctx.Alloc<T>(&ffn1_out, ffn1_out.numel() * sizeof(T));
+
+    // interleaved-weight-int8
+    phi::DenseTensor mixgemm_workspace;
+    auto qkv_mixgemm_max_size=std::max(output_size,input_size);
+    auto ffn_mixgemm_max_size=std::max(dim_ffn, dim_embed);
+    auto mixgemm_max_size = std::max(qkv_mixgemm_max_size,ffn_mixgemm_max_size);
+    long mixgemm_workspace_size_bytes = mixed_gemm_runner.getWorkspaceSize(token_num, mixgemm_max_size, mixgemm_max_size);
+    char* mixgemm_workspace_data=nullptr;
+    // if using interleaved_weight, we need some workspace for cutlass gemm
+    if(quant_weight){
+      mixgemm_workspace.Resize({mixgemm_workspace_size_bytes});
+      mixgemm_workspace_data = reinterpret_cast<char*>(dev_ctx.Alloc<uint8_t>(&mixgemm_workspace, mixgemm_workspace_size_bytes));
+    }
 
     int tmp_dim_ffn = dim_ffn / 2;
 
@@ -324,6 +355,7 @@ class FusedLLAMAOpKernel : public framework::OpKernel<T> {
 
     // 8. ffn2 matmul
     auto ffn2_weights = ctx.MultiInput<phi::DenseTensor>("FFN2Weight");
+    auto ffn2_weights_scales = ctx.MultiInput<phi::DenseTensor>("FFN2WeightScale");
     auto ffn2_linear_compute = AttnMatMul<T>(
         dev_ctx, false, false, token_num, dim_embed, tmp_dim_ffn, /*compute_bias*/false);
 
@@ -398,22 +430,55 @@ class FusedLLAMAOpKernel : public framework::OpKernel<T> {
           buf1->data<T>());
       }
 #ifdef _DEBUG_FUSED_MULTI_TRANSFORMER
+    if(i==0){
       VLOG(0) << "step1";
-      VLOG(0) << "ln_scale_data" << *ln_scales[i];
+      // VLOG(0) << "ln_scale_data" << *ln_scales[i];
       VLOG(0) << "token_num: " << token_num << ", dim_embed" << dim_embed;
       VLOG(0) << "rmsnorm 1_out:" << *buf1;
+
+      PrintHalfMatrix(buf1->data(), buf1->numel(), "/root/paddlejob/workspace/env_run/zhengzekang/Debug/RMSNORM1_output"); 
+
+    }
+      // VLOG(0) << "step1";
+      // VLOG(0) << "ln_scale_data" << *ln_scales[i];
+      // VLOG(0) << "token_num: " << token_num << ", dim_embed" << dim_embed;
+      // VLOG(0) << "rmsnorm 1_out:" << *buf1;
 #endif
 
       // step2. qkv
       const phi::DenseTensor *qkv_bias = nullptr;
       VLOG(5)<< "Doing qkv gemm, mnk:" << token_num << ", " << output_size << ", " << input_size;
-      qkv_compute.ComputeForward(
+
+      if(quant_weight){
+        mixed_gemm_runner.gemm(
+          reinterpret_cast<const typename PDDataTypeTraits<T>::DataType *>(buf1->data<T>()),
+          reinterpret_cast<const uint8_t*>(qkv_weights[i]->data<int8_t>()),
+          qkv_weights_scales[i]->data<float>(),
+          reinterpret_cast<typename PDDataTypeTraits<T>::DataType *>(qkv_out_data),
+          token_num,
+          output_size,
+          input_size,
+          mixgemm_workspace_data,
+          mixgemm_workspace_size_bytes,
+          dev_ctx.stream()
+        );
+      } else {
+        qkv_compute.ComputeForward(
           qkv_weights[i], buf1, /*bias*/nullptr, &qkv_out, &qkv_out, true);
+      }
+      
 
 #ifdef _DEBUG_FUSED_MULTI_TRANSFORMER
+    if(i==0){
       VLOG(0) << "step2";
-      VLOG(0) << "QKV Weight: " << *qkv_weights[i]; 
+      // VLOG(0) << "QKV Weight: " << *qkv_weights[i]; 
       VLOG(0) << "qkv_out:" << qkv_out;
+      PrintHalfMatrix(qkv_out.data(), qkv_out.numel(), "/root/paddlejob/workspace/env_run/zhengzekang/Debug/qkv_out"); 
+
+    }
+      // VLOG(0) << "step2";
+      // VLOG(0) << "QKV Weight: " << *qkv_weights[i]; 
+      // VLOG(0) << "qkv_out:" << qkv_out;
 #endif
 
       // step3. fmha
@@ -421,7 +486,16 @@ class FusedLLAMAOpKernel : public framework::OpKernel<T> {
           cache_kvs.size() > 0 ? cache_kvs[i] : nullptr;
       phi::DenseTensor *cache_kv_out = cache_kv ? cache_kv_outs[i] : nullptr;
 
-      if (time_step) {  // generation decoder stage
+      VLOG(0) << "SRC Mask is: "<<*src_mask; 
+      if (time_step) {  // generation decoder stage 
+#ifdef _DEBUG_FUSED_MULTI_TRANSFORMER
+        VLOG(0) << "Enter generation decoder stage"; 
+        VLOG(0) << "time_step is: " << *time_step;
+        if(i==0){
+          VLOG(0) << "Rotary embedding dims is: "<<rotary_emb_dims;
+          VLOG(0) << "Rotary embedding data is: "<<*rotary_tensor;
+        }
+#endif
         // [2, batch_size, num_head, max_seq_len, head_size]
         int max_seq_len = cache_kv->dims()[3];
         fmha<T>(dev_ctx,
@@ -444,6 +518,7 @@ class FusedLLAMAOpKernel : public framework::OpKernel<T> {
                 /*neox_rotary_style*/true);
         VLOG(2) << "fmha result" << fmha_out; 
       } else if (cache_kv_out) {  // generation context stage
+        VLOG(0) << "Enter generation context stage"; 
         const phi::DenseTensor *pre_cache_kv_tensor =
             pre_caches.size() > 0 ? pre_caches[i] : nullptr;
         phi::DenseTensor *pre_cache_kv_out_tmp =
@@ -469,6 +544,12 @@ class FusedLLAMAOpKernel : public framework::OpKernel<T> {
         // kv_transpose_out_data [2， bs, head_num, seq_len, dim_head]
         if (rotary_emb_dims != 0) {
           auto *rotary_emb_data = rotary_tensor->data<T>();
+#ifdef _DEBUG_FUSED_MULTI_TRANSFORMER
+    if(i==0){
+      VLOG(0) << "Rotary embedding dims is: "<<rotary_emb_dims;
+      VLOG(0) << "Rotary embedding data is: "<<*rotary_tensor;
+    }
+#endif
           const int *sequence_lengths_data =
               encoder_remove_padding ? sequence_lengths->data<int>() : nullptr;
           rotary_qk(dev_ctx,
@@ -486,6 +567,12 @@ class FusedLLAMAOpKernel : public framework::OpKernel<T> {
                     /*neox_rotary_style*/true);
         }
 
+#ifdef _DEBUG_FUSED_MULTI_TRANSFORMER
+    if(i==0){
+      VLOG(0) << "After Rotary";
+      VLOG(0) << "Q transpose out:" << q_transpose_out;
+    }
+#endif
         phi::DenseTensor *tmp_padding_offset_tensor =
             encoder_remove_padding ? &padding_offset_tensor : nullptr;
         if(FLAGS_use_cutlass_fmha){
@@ -559,6 +646,7 @@ class FusedLLAMAOpKernel : public framework::OpKernel<T> {
                           max_seq_len,
                           dim_head);
       } else {  // not generation
+        VLOG(0) << "Enter not generation"; 
         // TODO(wangxi): can remove dropout in inference
         qkv_bias_add_transpose_split<T>(dev_ctx,
                                         q_transpose_out_data,
@@ -579,7 +667,7 @@ class FusedLLAMAOpKernel : public framework::OpKernel<T> {
           auto *rotary_emb_data = rotary_tensor->data<T>();
           const int *sequence_lengths_data =
               encoder_remove_padding ? sequence_lengths->data<int>() : nullptr;
-          rotary_qk(dev_ctx,
+          llama_rotary_qk(dev_ctx,
                     q_transpose_out_data,
                     kv_transpose_out_data,
                     q_transpose_out_data,
@@ -591,6 +679,7 @@ class FusedLLAMAOpKernel : public framework::OpKernel<T> {
                     num_head,
                     seq_len,
                     dim_head, 
+                    rotary_tensor->dims()[2], 
                     /*neox_rotary_style*/true);
         }
         phi::DenseTensor *tmp_padding_offset_tensor =
@@ -630,16 +719,36 @@ class FusedLLAMAOpKernel : public framework::OpKernel<T> {
         
       }
 #ifdef _DEBUG_FUSED_MULTI_TRANSFORMER
+    if(i==0){
       VLOG(0) << "step3";
       VLOG(0) << "fmha_out:" << fmha_out;
+      PrintHalfMatrix(fmha_out.data(), fmha_out.numel(), "/root/paddlejob/workspace/env_run/zhengzekang/Debug/fmha_out"); 
+    }
+      // VLOG(0) << "step3";
+      // VLOG(0) << "fmha_out:" << fmha_out;
 #endif
       VLOG(5)<<"Doing out_linear gemm, mnk:"<<token_num<<", "<<dim_embed<<", "<<hidden_size;
       if (custom_comm) {
         custom_comm->SwapInput(buf1);
       }
 
-      out_linear_compute.ComputeForward(
+      if(quant_weight){
+        mixed_gemm_runner.gemm(
+            reinterpret_cast<const typename PDDataTypeTraits<T>::DataType*>(fmha_out_data),
+            reinterpret_cast<const uint8_t*>(out_linear_weights[i]->data<int8_t>()),
+            out_linear_weights_scales[i]->data<float>(),
+            reinterpret_cast<typename PDDataTypeTraits<T>::DataType*>(buf1->data<T>()),
+            token_num,
+            dim_embed, 
+            hidden_size,
+            mixgemm_workspace_data,
+            mixgemm_workspace_size_bytes,
+            dev_ctx.stream()
+          );
+      } else {
+        out_linear_compute.ComputeForward(
           out_linear_weights[i], &fmha_out, nullptr, buf1, nullptr, true);
+      }
 
       if (custom_comm) {
         *buf1 = custom_comm->AllReduce();
@@ -648,9 +757,16 @@ class FusedLLAMAOpKernel : public framework::OpKernel<T> {
       }
       
 #ifdef _DEBUG_FUSED_MULTI_TRANSFORMER
+    if(i==0){
       VLOG(0) << "step4";
       VLOG(0) << "Attn OutProject weight:" << *out_linear_weights[i];
       VLOG(0) << "Attn OutProject Out:" << *buf1;
+      PrintHalfMatrix(buf1->data(), buf1->numel(), "/root/paddlejob/workspace/env_run/zhengzekang/Debug/outproj_out"); 
+
+    }
+      // VLOG(0) << "step4";
+      // VLOG(0) << "Attn OutProject weight:" << *out_linear_weights[i];
+      // VLOG(0) << "Attn OutProject Out:" << *buf1;
 #endif
 
       // step5. ln(residual + dropout(input + bias))
@@ -667,22 +783,44 @@ class FusedLLAMAOpKernel : public framework::OpKernel<T> {
         buf1->data<T>());
 
 #ifdef _DEBUG_FUSED_MULTI_TRANSFORMER
+    if(i==0){
       VLOG(0) << "step5";
       VLOG(0) << "ResidualAdd RMSNORM weight: " << *ffn_ln_scales[i];
-      VLOG(0) << "ffn1_input:" << *buf1;
+      VLOG(0) << "ResidualAdd RMSNORM out:" << *buf1;
+      PrintHalfMatrix(buf1->data(), buf1->numel(), "/root/paddlejob/workspace/env_run/zhengzekang/Debug/rms_residual_out"); 
+    }
+      // VLOG(0) << "step5";
+      // VLOG(0) << "ResidualAdd RMSNORM weight: " << *ffn_ln_scales[i];
+      // VLOG(0) << "ffn1_input:" << *buf1;
 #endif
 
       // step6. ffn matmul1
       VLOG(5)<<"Doing ffn1 gemm, mnk:"<<token_num<<", "<<dim_ffn<<", "<<dim_embed;
-      ffn1_glu_helper.Compute(buf1,
+      if(quant_weight){
+        ffn1_glu_dyquant_helper.Compute(buf1,
+                                        ffn1_weights[i],
+                                        ffn1_weights_scales[i],
+                                        /*bias*/nullptr,
+                                        &mixgemm_workspace,
+                                        &ffn1_out,
+                                        &ffn1_dropout_out);
+      } else {
+        ffn1_glu_helper.Compute(buf1,
                               ffn1_weights[i],
                               nullptr,
                               &ffn1_out,
                               &ffn1_dropout_out);
+      }
       
 #ifdef _DEBUG_FUSED_MULTI_TRANSFORMER
+    if(i==0){
       VLOG(0) << "step6";
       VLOG(0) << "FFN1 out:" << ffn1_dropout_out;
+      VLOG(0) << "FFN1 out numel is: " << ffn1_dropout_out.numel(); 
+      PrintHalfMatrix(ffn1_dropout_out.data(), ffn1_dropout_out.numel(), "/root/paddlejob/workspace/env_run/zhengzekang/Debug/ffn1_out"); 
+    }
+      // VLOG(0) << "step6";
+      // VLOG(0) << "FFN1 out:" << ffn1_dropout_out;
 #endif
 
       // step8. ffn2 matmul
@@ -690,12 +828,31 @@ class FusedLLAMAOpKernel : public framework::OpKernel<T> {
       if (custom_comm) {
         custom_comm->SwapInput(buf1);
       }
-      ffn2_linear_compute.ComputeForward(
+      
+      if(quant_weight){
+        mixed_gemm_runner.gemm(
+          reinterpret_cast<const typename PDDataTypeTraits<T>::DataType *>(ffn1_dropout_out_data),
+          reinterpret_cast<const uint8_t*>(ffn2_weights[i]->data<int8_t>()),
+          ffn2_weights_scales[i]->data<float>(),
+          reinterpret_cast<typename PDDataTypeTraits<T>::DataType*>(buf1->data<T>()),
+          token_num,
+          dim_embed,
+          tmp_dim_ffn,
+          mixgemm_workspace_data,
+          mixgemm_workspace_size_bytes,
+          dev_ctx.stream()
+        );
+      } else {
+        ffn2_linear_compute.ComputeForward(
           ffn2_weights[i], &ffn1_dropout_out, nullptr, buf1, nullptr, true);
+      }
     
 #ifdef _DEBUG_FUSED_MULTI_TRANSFORMER
+    if(i==0){
       VLOG(0) << "step7";
       VLOG(0) << "ffn2_out:" << *buf1;
+      PrintHalfMatrix(buf1->data(), buf1->numel(), "/root/paddlejob/workspace/env_run/zhengzekang/Debug/ffn2_out"); 
+    }
 #endif
 
       VLOG(4) << "MPAllReduce 4: " << buf1->numel();
@@ -706,8 +863,10 @@ class FusedLLAMAOpKernel : public framework::OpKernel<T> {
       }
       
 #ifdef _DEBUG_FUSED_MULTI_TRANSFORMER
+    if(i==0){
       VLOG(0) << "step8.1";
-      VLOG(0) << "ffn2_out_rd:" << *buf1;
+      VLOG(0) << "ffn2_out_reduce:" << *buf1;
+    }
 #endif
 
       // step9. residual bias
@@ -733,20 +892,25 @@ class FusedLLAMAOpKernel : public framework::OpKernel<T> {
             dropout_mask_out_data);
       }
 #ifdef _DEBUG_FUSED_MULTI_TRANSFORMER
+    if(i==0){
       VLOG(0) << "step9";
       VLOG(0) << "residual_out:" << *buf1;
       VLOG(0) << "ResidualRMSNorm out:" << *buf0;
+    }
+      // VLOG(0) << "step9";
+      // VLOG(0) << "residual_out:" << *buf1;
+      // VLOG(0) << "ResidualRMSNorm out:" << *buf0;
 #endif
       x_data = buf1->data<T>();
       std::swap(buf0, buf1);
     }
     if (encoder_remove_padding) {
       InvokeRebuildPadding(dev_ctx,
-                            from_data,
-                            buf0->data<T>(),
-                            padding_offset_data,
-                            token_num,
-                            dim_embed);
+                           from_data,
+                           buf0->data<T>(),
+                           padding_offset_data,
+                           token_num,
+                           dim_embed);
     }
   }
 };
@@ -758,6 +922,6 @@ namespace ops = paddle::operators;
 namespace plat = paddle::platform;
 REGISTER_OP_CUDA_KERNEL(fused_llama,
                         ops::FusedLLAMAOpKernel<plat::bfloat16>,
-                        ops::FusedLLAMAOpKernel<plat::float16>,
+                        ops::FusedLLAMAOpKernel<plat::float16>, 
                         ops::FusedLLAMAOpKernel<float>
                         );

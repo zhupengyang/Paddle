@@ -185,6 +185,21 @@ class FusedLLAMAOpOpMaker
         .AsDuplicable();
     AddInput("FFN2Weight", "The linear2 weight of FusedFeedForward op")
         .AsDuplicable();
+
+    // Weightonly Scale 
+    AddInput("QKVWScale", "QKVWScale")        
+        .AsDispensable()
+        .AsDuplicable();
+    AddInput("OutLinearWScale", "OutLinearWScale")        
+        .AsDispensable()
+        .AsDuplicable();
+    AddInput("FFN1WeightScale", "FFN1WeightScale")        
+        .AsDispensable()
+        .AsDuplicable();
+    AddInput("FFN2WeightScale", "FFN2WeightScale")        
+        .AsDispensable()
+        .AsDuplicable();
+
     AddOutput("CacheKVOut", "The updated cache KV. Inplace with CacheKV")
         .AsDispensable()
         .AsDuplicable();
@@ -232,6 +247,9 @@ class FusedLLAMAOpOpMaker
         "Otherwise the shape of weights of qkv should be"
         "[dim_embed, 3, num_head, dim_head]")
         .SetDefault(true);
+
+    AddAttr<bool>("quant_weight","Whether do weight quant")
+        .SetDefault(false);
 
     AddAttr<int>(
         "ring_id",

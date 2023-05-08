@@ -94,12 +94,17 @@ class FusedLLAMA(Layer):
         ffn_ln_scale_attrs=None,
         ffn1_weight_attrs=None,
         ffn2_weight_attrs=None,
+        qkv_weight_scale_attrs=None,
+        linear_weight_scale_attrs=None,
+        ffn1_weight_scale_attrs=None,
+        ffn2_weight_scale_attrs=None,
         epsilon=1e-5,
         num_layers=-1,
         nranks=1,
         trans_qkvw=True,
         ring_id=-1,
-        name=None
+        name=None, 
+        quant_weight=False
     ):
         super().__init__()
 
@@ -123,6 +128,7 @@ class FusedLLAMA(Layer):
         self._epsilon = epsilon
         self._trans_qkvw = trans_qkvw
         self._ring_id = ring_id
+        self._quant_weight=quant_weight
 
         self.embed_dim = embed_dim
         self.num_heads = num_heads
@@ -150,12 +156,21 @@ class FusedLLAMA(Layer):
         self.ffn_ln_scales = []
         self.ffn1_weights = []
         self.ffn2_weights = []
+        self.qkv_weights_scales = []
+        self.linear_weights_scales = []
+        self.ffn1_weights_scales = []
+        self.ffn2_weights_scales = []
+
 
         def get_attr(attrs, idx):
             if isinstance(attrs, (list, tuple)):
                 assert len(attrs) == num_layers
                 return attrs[idx]
             return attrs
+        
+        def _add_parameter(param):
+            assert param.name not in self._parameters
+            self._parameters[param.name] = param
 
         for i in range(num_layers):
             ln_scale_attr = get_attr(ln_scale_attrs, i)
@@ -166,25 +181,50 @@ class FusedLLAMA(Layer):
             ffn1_weight_attr = get_attr(ffn1_weight_attrs, i)
             ffn2_weight_attr = get_attr(ffn2_weight_attrs, i)
 
+            qkv_weight_scale_attr = get_attr(qkv_weight_scale_attrs, i)
+            linear_weight_scale_attr = get_attr(linear_weight_scale_attrs, i)
+            ffn1_weight_scale_attr = get_attr(ffn1_weight_scale_attrs, i)
+            ffn2_weight_scale_attr = get_attr(ffn2_weight_scale_attrs, i)
+
             ln_scale = self.create_parameter(
                 attr=ln_scale_attr,
                 shape=[embed_dim],
                 default_initializer=Constant(value=1.0),
             )
-            qkv_weight = self.create_parameter(
-                shape=[3, num_heads, self.head_dim, embed_dim]
-                if trans_qkvw
-                else [embed_dim, 3, num_heads, self.head_dim],
-                attr=qkv_weight_attr,
-                dtype=self._dtype,
-                is_bias=False,
-            )
-            linear_weight = self.create_parameter(
-                shape=[num_heads * self.head_dim, embed_dim],
-                attr=linear_weight_attr,
-                dtype=self._dtype,
-                is_bias=False,
-            )
+            
+            if not self._quant_weight:
+                qkv_weight = self.create_parameter(
+                    shape=[3, num_heads, self.head_dim, embed_dim]
+                    if trans_qkvw
+                    else [embed_dim, 3, num_heads, self.head_dim],
+                    attr=qkv_weight_attr,
+                    dtype=self._dtype,
+                    is_bias=False,
+                )
+            else:
+                qkv_weight = self.create_parameter(
+                    [embed_dim, 3, num_heads, self.head_dim],
+                    attr=qkv_weight_attr,
+                    dtype='int8',
+                    is_bias=False,
+                )
+
+            if not self._quant_weight:
+                linear_weight = self.create_parameter(
+                    shape=[num_heads * self.head_dim, embed_dim],
+                    attr=linear_weight_attr,
+                    dtype=self._dtype,
+                    is_bias=False,
+                )
+            else:
+                linear_weight = self.create_parameter(
+                    shape=[num_heads * self.head_dim, embed_dim],
+                    attr=linear_weight_attr,
+                    dtype='int8',
+                    is_bias=False,
+                )
+
+            
 
             ffn_ln_scale = self.create_parameter(
                 shape=[embed_dim],
@@ -192,18 +232,62 @@ class FusedLLAMA(Layer):
                 is_bias=False,
                 default_initializer=Constant(1.0),
             )
-            ffn1_weight = self.create_parameter(
-                shape=[embed_dim, dim_feedforward * 2], # Since LLAMA use GLU Arch, we need double the dimension. 
-                attr=ffn1_weight_attr,
+
+            if not self._quant_weight:
+                ffn1_weight = self.create_parameter(
+                    shape=[embed_dim, dim_feedforward * 2], # Since LLAMA use GLU Arch, we need double the dimension. 
+                    attr=ffn1_weight_attr,
+                    dtype=self._dtype,
+                    is_bias=False,
+                )
+            else:
+                ffn1_weight = self.create_parameter(
+                    shape=[embed_dim, dim_feedforward * 2], # Since LLAMA use GLU Arch, we need double the dimension. 
+                    attr=ffn1_weight_attr,
+                    dtype='int8',
+                    is_bias=False,
+                )
+
+            if not self._quant_weight:
+                ffn2_weight = self.create_parameter(
+                    shape=[dim_feedforward, embed_dim],
+                    attr=ffn2_weight_attr,
+                    dtype=self._dtype,
+                    is_bias=False,
+                )
+            else: 
+                ffn2_weight = self.create_parameter(
+                    shape=[dim_feedforward, embed_dim],
+                    attr=ffn2_weight_attr,
+                    dtype='int8',
+                    is_bias=False,
+                )
+
+            qkv_weight_scale = self.create_parameter(
+                [3, num_heads, self.head_dim],
+                attr=qkv_weight_scale_attr,
                 dtype=self._dtype,
                 is_bias=False,
             )
-            ffn2_weight = self.create_parameter(
-                shape=[dim_feedforward, embed_dim],
-                attr=ffn2_weight_attr,
+            linear_weight_scale = self.create_parameter(
+                shape=[embed_dim],
+                attr=linear_weight_scale_attr,
                 dtype=self._dtype,
                 is_bias=False,
             )
+            ffn1_weight_scale = self.create_parameter(
+                shape=[dim_feedforward * 2],
+                attr=ffn1_weight_scale_attr,
+                dtype=self._dtype,
+                is_bias=False,
+            )
+            ffn2_weight_scale = self.create_parameter(
+                shape=[embed_dim],
+                attr=ffn2_weight_scale_attr,
+                dtype=self._dtype,
+                is_bias=False,
+            )
+            
             # tensor model parallel
             if nranks > 1:
                 # column parallel
@@ -214,6 +298,12 @@ class FusedLLAMA(Layer):
                 _set_var_distributed(linear_weight)
                 _set_var_distributed(ffn2_weight)
 
+                _set_var_distributed(qkv_weight_scale)
+                _set_var_distributed(ffn1_weight_scale)
+                _set_var_distributed(linear_weight_scale)
+                _set_var_distributed(ffn2_weight_scale)
+
+
             self.ln_scales.append(ln_scale)
             self.qkv_weights.append(qkv_weight)
             self.linear_weights.append(linear_weight)
@@ -221,6 +311,25 @@ class FusedLLAMA(Layer):
             self.ffn_ln_scales.append(ffn_ln_scale)
             self.ffn1_weights.append(ffn1_weight)
             self.ffn2_weights.append(ffn2_weight)
+
+            self.qkv_weights_scales.append(qkv_weight_scale)
+            self.linear_weights_scales.append(linear_weight_scale)
+            self.ffn1_weights_scales.append(ffn1_weight_scale)
+            self.ffn2_weights_scales.append(ffn2_weight_scale)
+
+            _add_parameter(ln_scale)
+            _add_parameter(qkv_weight)
+            _add_parameter(linear_weight)
+
+            _add_parameter(ffn_ln_scale)
+            _add_parameter(ffn1_weight)
+            _add_parameter(ffn2_weight)
+
+            _add_parameter(qkv_weight_scale)
+            _add_parameter(linear_weight_scale)
+            _add_parameter(ffn1_weight_scale)
+            _add_parameter(ffn2_weight_scale)
+
         self.dropout_rate = dropout_rate
         self.activation = activation
         self.name = name
@@ -282,6 +391,10 @@ class FusedLLAMA(Layer):
             self.ffn_ln_scales,
             self.ffn1_weights,
             self.ffn2_weights,
+            self.qkv_weights_scales,
+            self.linear_weights_scales,
+            self.ffn1_weights_scales,
+            self.ffn2_weights_scales,
             epsilon=self._epsilon,
             cache_kvs=caches,
             pre_caches=pre_caches,
