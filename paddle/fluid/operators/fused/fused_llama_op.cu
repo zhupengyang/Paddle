@@ -442,16 +442,10 @@ class FusedLLAMAOpKernel : public framework::OpKernel<T> {
 #ifdef _DEBUG_FUSED_MULTI_TRANSFORMER
     if(i==0){
       VLOG(0) << "step1";
-      // VLOG(0) << "ln_scale_data" << *ln_scales[i];
+      VLOG(0) << "ln_scale_data" << *ln_scales[i];
       VLOG(0) << "token_num: " << token_num << ", dim_embed" << dim_embed;
       VLOG(0) << "rmsnorm 1_out:" << *buf1;
-      // PrintHalfMatrix(buf1->data(), buf1->numel(), "/root/paddlejob/workspace/env_run/zhengzekang/Debug/RMSNORM1_output"); 
-
     }
-      // VLOG(0) << "step1";
-      // VLOG(0) << "ln_scale_data" << *ln_scales[i];
-      // VLOG(0) << "token_num: " << token_num << ", dim_embed" << dim_embed;
-      // VLOG(0) << "rmsnorm 1_out:" << *buf1;
 #endif
 
       // step2. qkv
@@ -480,14 +474,9 @@ class FusedLLAMAOpKernel : public framework::OpKernel<T> {
 #ifdef _DEBUG_FUSED_MULTI_TRANSFORMER
     if(i==0){
       VLOG(0) << "step2";
-      // VLOG(0) << "QKV Weight: " << *qkv_weights[i]; 
+      VLOG(0) << "QKV Weight: " << *qkv_weights[i]; 
       VLOG(0) << "qkv_out:" << qkv_out;
-      // PrintHalfMatrix(qkv_out.data(), qkv_out.numel(), "/root/paddlejob/workspace/env_run/zhengzekang/Debug/qkv_out"); 
-
     }
-      // VLOG(0) << "step2";
-      // VLOG(0) << "QKV Weight: " << *qkv_weights[i]; 
-      // VLOG(0) << "qkv_out:" << qkv_out;
 #endif
 
       // step3. fmha
@@ -735,10 +724,7 @@ class FusedLLAMAOpKernel : public framework::OpKernel<T> {
     if(i==0){
       VLOG(0) << "step3";
       VLOG(0) << "fmha_out:" << fmha_out;
-      // PrintHalfMatrix(fmha_out.data(), fmha_out.numel(), "/root/paddlejob/workspace/env_run/zhengzekang/Debug/fmha_out"); 
     }
-      // VLOG(0) << "step3";
-      // VLOG(0) << "fmha_out:" << fmha_out;
 #endif
       VLOG(5)<<"Doing out_linear gemm, mnk:"<<token_num<<", "<<dim_embed<<", "<<hidden_size;
       if (custom_comm) {
@@ -774,12 +760,7 @@ class FusedLLAMAOpKernel : public framework::OpKernel<T> {
       VLOG(0) << "step4";
       VLOG(0) << "Attn OutProject weight:" << *out_linear_weights[i];
       VLOG(0) << "Attn OutProject Out:" << *buf1;
-      // PrintHalfMatrix(buf1->data(), buf1->numel(), "/root/paddlejob/workspace/env_run/zhengzekang/Debug/outproj_out"); 
-
     }
-      // VLOG(0) << "step4";
-      // VLOG(0) << "Attn OutProject weight:" << *out_linear_weights[i];
-      // VLOG(0) << "Attn OutProject Out:" << *buf1;
 #endif
 
       // step5. ln(residual + dropout(input + bias))
@@ -800,11 +781,7 @@ class FusedLLAMAOpKernel : public framework::OpKernel<T> {
       VLOG(0) << "step5";
       VLOG(0) << "ResidualAdd RMSNORM weight: " << *ffn_ln_scales[i];
       VLOG(0) << "ResidualAdd RMSNORM out:" << *buf1;
-      // PrintHalfMatrix(buf1->data(), buf1->numel(), "/root/paddlejob/workspace/env_run/zhengzekang/Debug/rms_residual_out"); 
     }
-      // VLOG(0) << "step5";
-      // VLOG(0) << "ResidualAdd RMSNORM weight: " << *ffn_ln_scales[i];
-      // VLOG(0) << "ffn1_input:" << *buf1;
 #endif
 
       // step6. ffn matmul1
@@ -830,10 +807,7 @@ class FusedLLAMAOpKernel : public framework::OpKernel<T> {
       VLOG(0) << "step6";
       VLOG(0) << "FFN1 out:" << ffn1_dropout_out;
       VLOG(0) << "FFN1 out numel is: " << ffn1_dropout_out.numel(); 
-      // PrintHalfMatrix(ffn1_dropout_out.data(), ffn1_dropout_out.numel(), "/root/paddlejob/workspace/env_run/zhengzekang/Debug/ffn1_out"); 
     }
-      // VLOG(0) << "step6";
-      // VLOG(0) << "FFN1 out:" << ffn1_dropout_out;
 #endif
 
       // step8. ffn2 matmul
@@ -864,7 +838,6 @@ class FusedLLAMAOpKernel : public framework::OpKernel<T> {
     if(i==0){
       VLOG(0) << "step7";
       VLOG(0) << "ffn2_out:" << *buf1;
-      // PrintHalfMatrix(buf1->data(), buf1->numel(), "/root/paddlejob/workspace/env_run/zhengzekang/Debug/ffn2_out"); 
     }
 #endif
 
