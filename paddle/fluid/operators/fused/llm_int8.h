@@ -152,12 +152,6 @@ struct QuantFunc{
 
 template<typename T>
 struct DequantFunc{
-  HOSTDEVICE T operator()(int8_t x, T scale) {
-    return static_cast<T>(static_cast<float>(x) * static_cast<float>(scale));
-  }
-  HOSTDEVICE T operator()(int32_t x, T input_range, T weight_scale) {
-    return static_cast<T>(static_cast<float>(x) * static_cast<float>(input_range) * static_cast<float>(weight_scale) / (127.0f));
-  }
   HOSTDEVICE T operator()(int8_t x, float scale) {
     return static_cast<T>(static_cast<float>(x) * static_cast<float>(scale));
   }

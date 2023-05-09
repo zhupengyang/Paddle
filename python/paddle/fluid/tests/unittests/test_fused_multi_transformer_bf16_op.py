@@ -328,8 +328,8 @@ class TestFusedMultiTransformerOp(OpTest):
                 ),
                 "float32",
             ), "bfloat16")
-            cos_emb = paddle.stack([self.cos_emb, self.cos_emb], -1).reshape([1, 1, 1, self.query_length, self.head_dim])
-            sin_emb = paddle.stack([self.sin_emb, self.sin_emb], -1).reshape([1, 1, 1, self.query_length, self.head_dim])
+            cos_emb = paddle.stack([self.cos_emb, self.cos_emb], -1).reshape([1, self.batch_size, 1, self.query_length, self.head_dim])
+            sin_emb = paddle.stack([self.sin_emb, self.sin_emb], -1).reshape([1, self.batch_size, 1, self.query_length, self.head_dim])
             self.rotary_embs = paddle.to_tensor(
                 np.random.uniform(
                     -1,

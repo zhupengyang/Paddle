@@ -578,7 +578,9 @@ VLOG(0) << "qkv_weights_scales:" << *(qkv_weights_scales[i]);
                 src_mask->dims()[3] - 1,
                 rotary_emb_dims,
                 1. / sqrt(dim_head),
-                mask_broadcast_num_heads);
+                mask_broadcast_num_heads, 
+                compute_bias, 
+                /*neox_rotary_style*/false);
       } else if (cache_kv_out) {  // generation context stage
         const phi::DenseTensor *pre_cache_kv_tensor =
             pre_caches.size() > 0 ? pre_caches[i] : nullptr;
@@ -618,7 +620,8 @@ VLOG(0) << "qkv_weights_scales:" << *(qkv_weights_scales[i]);
                     bsz,
                     num_head,
                     seq_len,
-                    dim_head);
+                    dim_head, 
+                    /*neox_rotary_style*/false);
         }
 
         phi::DenseTensor *tmp_padding_offset_tensor =
@@ -726,7 +729,8 @@ VLOG(0) << "qkv_weights_scales:" << *(qkv_weights_scales[i]);
                     bsz,
                     num_head,
                     seq_len,
-                    dim_head);
+                    dim_head, 
+                    /*neox_rotary_style*/false);
         }
         phi::DenseTensor *tmp_padding_offset_tensor =
             encoder_remove_padding ? &padding_offset_tensor : nullptr;

@@ -176,6 +176,32 @@ struct DirectLoad {
 };
 
 template<typename SRC, typename DST>
+struct ResidualAddLoad {
+  using LoadType = DST;
+  ResidualAddLoad(const SRC* src, 
+                  const SRC* residual, 
+                  SRC* residual_out, 
+                  int32_t row_size) : src(src), residual(residual), residual_out(residual_out), row_size(row_size) {}
+  template<int N>
+  __device__ void load(DST* dst, int32_t row, int32_t col) const {
+    Pack<SRC, N> src_pack;
+    Pack<SRC, N> residual_pack;
+    const int32_t offset = (row * row_size + col) / N;
+    src_pack.storage = *(reinterpret_cast<const PackType<SRC, N>*>(src) + offset);
+    residual_pack.storage = *(reinterpret_cast<const PackType<SRC, N>*>(residual) + offset);
+#pragma unroll
+    for (int i = 0; i < N; ++i) { src_pack.elem[i] += residual_pack.elem[i]; }
+#pragma unroll
+    for (int i = 0; i < N; ++i) { dst[i] = static_cast<DST>(src_pack.elem[i]); }
+    *(reinterpret_cast<PackType<SRC, N>*>(residual_out) + offset) = src_pack.storage;
+  }
+  const SRC* src;
+  const SRC* residual;
+  SRC* residual_out;
+  int32_t row_size;
+};
+
+template<typename SRC, typename DST>
 struct DirectStore {
   DirectStore(DST* dst, int32_t row_size) : dst(dst), row_size(row_size) {}
   template<int N>
@@ -503,88 +529,6 @@ inline cudaError_t TryDispatchRmsNormBlockSMemImpl(cudaStream_t stream, LOAD loa
       stream, load, store, rows, cols, epsilon, col_divisor, success);
 }
 
-template<typename LOAD, typename STORE, typename ComputeType, int pack_size, int block_size>
-__global__ void __launch_bounds__(1024)
-    RmsNormBlockUncachedImpl(LOAD load, STORE store, const int32_t rows, const int32_t cols,
-                             const float epsilon, ComputeType col_divisor) {
-  using LoadType = typename LOAD::LoadType;
-  const int tid = threadIdx.x;
-  assert(cols % pack_size == 0);
-  const int num_packs = static_cast<int>(cols) / pack_size;
-  for (int32_t row = blockIdx.x; row < rows; row += gridDim.x) {
-    ComputeType thread_sum_square = 0;
-    for (int pack_id = tid; pack_id < num_packs; pack_id += block_size) {
-      LoadType pack[pack_size];
-      load.template load<pack_size>(pack, row, pack_id * pack_size);
-#pragma unroll
-      for (int i = 0; i < pack_size; ++i) {
-        ComputeType pack_val = static_cast<ComputeType>(pack[i]); 
-        thread_sum_square += pack_val * pack_val; 
-      }
-    }
-    
-    const ComputeType row_sum_square = BlockAllReduce<SumOp, ComputeType, block_size>(thread_sum_square);
-
-    // use multiply instead of divide. 
-    ComputeType row_rms = row_sum_square * col_divisor; 
-    ComputeType row_inv_rms = Rsqrt(row_rms + static_cast<ComputeType>(epsilon));
-    for (int pack_id = tid; pack_id < num_packs; pack_id += block_size) {
-      LoadType pack[pack_size];
-      ComputeType dst_pack[pack_size];
-      const int pack_offset = pack_id * pack_size;
-      load.template load<pack_size>(pack, row, pack_offset);
-#pragma unroll
-      for (int i = 0; i < pack_size; ++i) {
-        dst_pack[i] = static_cast<ComputeType>(pack[i]) * row_inv_rms;
-      }
-      store.template store<pack_size>(dst_pack, row, pack_offset);
-    }
-  }
-}
-
-template<typename LOAD, typename STORE, typename ComputeType, int pack_size>
-inline cudaError_t LaunchRmsNormBlockUncachedImpl(cudaStream_t stream, LOAD load, STORE store,
-                                                    const int32_t rows, const int32_t cols,
-                                                    const float epsilon, ComputeType col_divisor) {
-  constexpr int block_size = 1024;
-  constexpr int waves = 32;
-  int grid_dim_x;
-  {
-    cudaError_t err =
-        GetNumBlocks(RmsNormBlockUncachedImpl<LOAD, STORE, ComputeType, pack_size, block_size>,
-                     block_size, 0, rows, waves, &grid_dim_x);
-    if (err != cudaSuccess) { return err; }
-  }
-  RmsNormBlockUncachedImpl<LOAD, STORE, ComputeType, pack_size, block_size>
-      <<<grid_dim_x, block_size, 0, stream>>>(load, store, rows, cols, epsilon, col_divisor);
-  return cudaPeekAtLastError();
-}
-
-template<typename LOAD, typename STORE, typename ComputeType>
-struct DispatchRmsNormBlockUncachedImplPackSize {
-  cudaError_t operator()(cudaStream_t stream, LOAD load, STORE store, const int32_t rows,
-                         const int32_t cols, const float epsilon, ComputeType col_divisor) {
-    if (cols % 4 == 0 && CanPackAs<LOAD>(load, 4) && CanPackAs<STORE>(store, 4)) {
-      return LaunchRmsNormBlockUncachedImpl<LOAD, STORE, ComputeType, 4>(
-          stream, load, store, rows, cols, epsilon, col_divisor);
-    } else if (cols % 2 == 0 && CanPackAs<LOAD>(load, 2) && CanPackAs<STORE>(store, 2)) {
-      return LaunchRmsNormBlockUncachedImpl<LOAD, STORE, ComputeType, 2>(
-          stream, load, store, rows, cols, epsilon, col_divisor);
-    } else {
-      return LaunchRmsNormBlockUncachedImpl<LOAD, STORE, ComputeType, 1>(
-          stream, load, store, rows, cols, epsilon, col_divisor);
-    }
-  }
-};
-
-template<typename LOAD, typename STORE, typename ComputeType>
-inline cudaError_t DispatchRmsNormBlockUncachedImpl(cudaStream_t stream, LOAD load, STORE store,
-                                                      const int32_t rows, const int32_t cols,
-                                                      const float epsilon, ComputeType col_divisor) {
-  return DispatchRmsNormBlockUncachedImplPackSize<LOAD, STORE, ComputeType>()(
-      stream, load, store, rows, cols, epsilon, col_divisor);
-}
-
 template<typename LOAD, typename STORE, typename ComputeType>
 inline typename std::enable_if<!std::is_same<ComputeType, double>::value, cudaError_t>::type
 DispatchRmsNorm(cudaStream_t stream, LOAD load, STORE store, const int32_t rows,
@@ -596,10 +540,6 @@ DispatchRmsNorm(cudaStream_t stream, LOAD load, STORE store, const int32_t rows,
         stream, load, store, rows, cols, epsilon, col_divisor, 
         &dispatch_smem_impl_success);
     if (err != cudaSuccess) { return err; }
-  }
-  if (!dispatch_smem_impl_success) {
-    return DispatchRmsNormBlockUncachedImpl<LOAD, STORE, ComputeType>(
-        stream, load, store, rows, cols, epsilon, col_divisor);
   }
   return cudaSuccess;
 }
@@ -701,9 +641,102 @@ void RmsNormKernel(const Context& dev_ctx,
   
   DirectLoad<T, ComputeType> load(x_data, cols);
   AffineStore<ComputeType, T> store(out_data, cols, weight_data);
+
+  // TODO add GPU_ENFORCE_SUCCESS
   DispatchRmsNorm<decltype(load), decltype(store), ComputeType>(
     dev_ctx.stream(), load, store, rows, cols, epsilon);
 }
+
+
+template <typename T, typename Context>
+void RmsNormWrapper(const Context& ctx,
+                    const T* x,
+                    const T* weight,
+                    const float epsilon,
+                    const int rows, 
+                    const int cols, 
+                    T* output) {
+  using ComputeType = typename phi::dtype::MPTypeTrait<T>::Type;
+
+  DirectLoad<T, ComputeType> load(x, cols);
+  AffineStore<ComputeType, T> store(output, cols, weight);
+  DispatchRmsNorm<decltype(load), decltype(store), ComputeType>(
+    ctx.stream(), load, store, rows, cols, epsilon);
+}
+
+template void RmsNormWrapper(const phi::GPUContext& ctx,
+                             const phi::dtype::float16* x,
+                             const phi::dtype::float16* weight,
+                             const float epsilon,
+                             const int rows, 
+                             const int cols, 
+                             phi::dtype::float16* output); 
+
+template void RmsNormWrapper(const phi::GPUContext& ctx,
+                             const phi::dtype::bfloat16* x,
+                             const phi::dtype::bfloat16* weight,
+                             const float epsilon,
+                             const int rows, 
+                             const int cols, 
+                             phi::dtype::bfloat16* output); 
+
+template void RmsNormWrapper(const phi::GPUContext& ctx,
+                             const float* x,
+                             const float* weight,
+                             const float epsilon,
+                             const int rows, 
+                             const int cols, 
+                             float* output);
+
+// ========== ResidualAdd + RMSNorm ========== 
+
+template <typename T, typename Context>
+void ResidualAddRmsNormWrapper(const Context& ctx,
+                               const T* x,
+                               const T* residual, 
+                               const T* weight,
+                               const float epsilon,
+                               const int rows, 
+                               const int cols, 
+                               T* residual_output, 
+                               T* output) {
+  using ComputeType = typename phi::dtype::MPTypeTrait<T>::Type;
+  ResidualAddLoad<T, ComputeType> load(x, residual, residual_output, cols);
+  AffineStore<ComputeType, T> store(output, cols, weight);
+  DispatchRmsNorm<decltype(load), decltype(store), ComputeType>(
+    ctx.stream(), load, store, rows, cols, epsilon);
+}
+
+template void ResidualAddRmsNormWrapper(const phi::GPUContext& ctx,
+                                        const phi::dtype::float16* x,
+                                        const phi::dtype::float16* residual,
+                                        const phi::dtype::float16* weight,
+                                        const float epsilon,
+                                        const int rows, 
+                                        const int cols, 
+                                        phi::dtype::float16* residual_output,
+                                        phi::dtype::float16* output); 
+
+template void ResidualAddRmsNormWrapper(const phi::GPUContext& ctx,
+                                        const phi::dtype::bfloat16* x,
+                                        const phi::dtype::bfloat16* residual,
+                                        const phi::dtype::bfloat16* weight,
+                                        const float epsilon,
+                                        const int rows, 
+                                        const int cols, 
+                                        phi::dtype::bfloat16* residual_output,
+                                        phi::dtype::bfloat16* output); 
+
+template void ResidualAddRmsNormWrapper(const phi::GPUContext& ctx,
+                                        const float* x,
+                                        const float* residual, 
+                                        const float* weight,
+                                        const float epsilon,
+                                        const int rows, 
+                                        const int cols, 
+                                        float* residual_output, 
+                                        float* output);  
+
 
 }  // namespace phi
 
