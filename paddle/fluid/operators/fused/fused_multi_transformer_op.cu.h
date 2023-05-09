@@ -83,7 +83,7 @@ inline uint32_t fp32_to_bits(float f) {
 #endif
 }  
 
-float CPUHalfConvert2Float(const uint16_t h){
+static float CPUHalfConvert2Float(const uint16_t h){
   const uint32_t w = (uint32_t)h << 16;
   const uint32_t sign = w & UINT32_C(0x80000000);
   const uint32_t two_w = w + w;
@@ -1500,7 +1500,6 @@ void rotary_qk(const phi::GPUContext &dev_ctx,
   // seq_len * rotary_emb_dims, dim_head / rotary_emb_dims] rotary_emb [2, bs,
   // 1, seq_len, dim_head] -> [2, bs, 1, seq_len * rotary_emb_dims, dim_head /
   // rotary_emb_dims]
-  VLOG(0) << " B: " << batch_size << " S: " << seq_len << " Headnum: "<<head_num << " dim head: " << dim_head; 
   dim3 grid(batch_size, head_num, seq_len * rotary_emb_dims);
   const int last_dim = dim_head / rotary_emb_dims;
   auto getBlockSize = [](int dim) {

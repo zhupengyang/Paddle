@@ -156,11 +156,6 @@ class FusedLLAMAOpKernel : public framework::OpKernel<T> {
     // Since we fused QKVBias into QKVBiasAddTransposeSplit kernel, here we
     // set qkv_compute_bias as false.
 
-    if(trans_qkvw){
-      VLOG(0) << "TRANS QKVW"; 
-    } 
-    VLOG(0) << "outputsize " << output_size << " input_size " << input_size << " tokennum " << token_num; 
-
     auto qkv_compute = AttnMatMul<T>(dev_ctx,
                                      false,
                                      trans_qkvw,
@@ -320,7 +315,7 @@ class FusedLLAMAOpKernel : public framework::OpKernel<T> {
     auto ffn1_weights = ctx.MultiInput<phi::DenseTensor>("FFN1Weight");
     auto ffn1_weights_scales = ctx.MultiInput<phi::DenseTensor>("FFN1WeightScale");
     auto ffn1_weight_dim = ffn1_weights[0]->dims();
-    int dim_ffn = ffn1_weight_dim[1];
+    int dim_ffn = quant_weight ? ffn1_weight_dim[0] : ffn1_weight_dim[1];
     FFNGluHelper<T> ffn1_glu_helper(
         dev_ctx, "swiglu", token_num, dim_ffn / 2, dim_ffn, dim_embed);
     
@@ -414,6 +409,21 @@ class FusedLLAMAOpKernel : public framework::OpKernel<T> {
       }
     }
 
+#ifdef _DEBUG_FUSED_MULTI_TRANSFORMER
+    // Debug For Some Attribute Value. 
+    if(quant_weight){
+      VLOG(0)<<"Doing debug FusedLLAMA, quant_weight==true";
+    } else {
+      VLOG(0)<<"Doing debug FusedLLAMA, quant_weight==false";
+    }
+
+    if(trans_qkvw){
+      VLOG(0) << "TRANS QKVW"; 
+    } 
+
+    VLOG(0) << "outputsize " << output_size << " input_size " << input_size << " tokennum " << token_num; 
+#endif 
+
     for (int i = 0; i < layers; ++i) {
       // step1. layer_norm, LLAMA use pre_layer_norm. 
       if (i == 0) {
@@ -435,8 +445,7 @@ class FusedLLAMAOpKernel : public framework::OpKernel<T> {
       // VLOG(0) << "ln_scale_data" << *ln_scales[i];
       VLOG(0) << "token_num: " << token_num << ", dim_embed" << dim_embed;
       VLOG(0) << "rmsnorm 1_out:" << *buf1;
-
-      PrintHalfMatrix(buf1->data(), buf1->numel(), "/root/paddlejob/workspace/env_run/zhengzekang/Debug/RMSNORM1_output"); 
+      // PrintHalfMatrix(buf1->data(), buf1->numel(), "/root/paddlejob/workspace/env_run/zhengzekang/Debug/RMSNORM1_output"); 
 
     }
       // VLOG(0) << "step1";
@@ -473,7 +482,7 @@ class FusedLLAMAOpKernel : public framework::OpKernel<T> {
       VLOG(0) << "step2";
       // VLOG(0) << "QKV Weight: " << *qkv_weights[i]; 
       VLOG(0) << "qkv_out:" << qkv_out;
-      PrintHalfMatrix(qkv_out.data(), qkv_out.numel(), "/root/paddlejob/workspace/env_run/zhengzekang/Debug/qkv_out"); 
+      // PrintHalfMatrix(qkv_out.data(), qkv_out.numel(), "/root/paddlejob/workspace/env_run/zhengzekang/Debug/qkv_out"); 
 
     }
       // VLOG(0) << "step2";
@@ -485,8 +494,9 @@ class FusedLLAMAOpKernel : public framework::OpKernel<T> {
       const phi::DenseTensor *cache_kv =
           cache_kvs.size() > 0 ? cache_kvs[i] : nullptr;
       phi::DenseTensor *cache_kv_out = cache_kv ? cache_kv_outs[i] : nullptr;
-
+#ifdef _DEBUG_FUSED_MULTI_TRANSFORMER
       VLOG(0) << "SRC Mask is: "<<*src_mask; 
+#endif 
       if (time_step) {  // generation decoder stage 
 #ifdef _DEBUG_FUSED_MULTI_TRANSFORMER
         VLOG(0) << "Enter generation decoder stage"; 
@@ -518,7 +528,9 @@ class FusedLLAMAOpKernel : public framework::OpKernel<T> {
                 /*neox_rotary_style*/true);
         VLOG(2) << "fmha result" << fmha_out; 
       } else if (cache_kv_out) {  // generation context stage
+#ifdef _DEBUG_FUSED_MULTI_TRANSFORMER
         VLOG(0) << "Enter generation context stage"; 
+#endif
         const phi::DenseTensor *pre_cache_kv_tensor =
             pre_caches.size() > 0 ? pre_caches[i] : nullptr;
         phi::DenseTensor *pre_cache_kv_out_tmp =
@@ -646,7 +658,9 @@ class FusedLLAMAOpKernel : public framework::OpKernel<T> {
                           max_seq_len,
                           dim_head);
       } else {  // not generation
-        VLOG(0) << "Enter not generation"; 
+#ifdef _DEBUG_FUSED_MULTI_TRANSFORMER
+        VLOG(0) << "Enter not generation";
+#endif 
         // TODO(wangxi): can remove dropout in inference
         qkv_bias_add_transpose_split<T>(dev_ctx,
                                         q_transpose_out_data,
@@ -667,7 +681,7 @@ class FusedLLAMAOpKernel : public framework::OpKernel<T> {
           auto *rotary_emb_data = rotary_tensor->data<T>();
           const int *sequence_lengths_data =
               encoder_remove_padding ? sequence_lengths->data<int>() : nullptr;
-          llama_rotary_qk(dev_ctx,
+          rotary_qk(dev_ctx,
                     q_transpose_out_data,
                     kv_transpose_out_data,
                     q_transpose_out_data,
@@ -679,7 +693,6 @@ class FusedLLAMAOpKernel : public framework::OpKernel<T> {
                     num_head,
                     seq_len,
                     dim_head, 
-                    rotary_tensor->dims()[2], 
                     /*neox_rotary_style*/true);
         }
         phi::DenseTensor *tmp_padding_offset_tensor =
@@ -722,7 +735,7 @@ class FusedLLAMAOpKernel : public framework::OpKernel<T> {
     if(i==0){
       VLOG(0) << "step3";
       VLOG(0) << "fmha_out:" << fmha_out;
-      PrintHalfMatrix(fmha_out.data(), fmha_out.numel(), "/root/paddlejob/workspace/env_run/zhengzekang/Debug/fmha_out"); 
+      // PrintHalfMatrix(fmha_out.data(), fmha_out.numel(), "/root/paddlejob/workspace/env_run/zhengzekang/Debug/fmha_out"); 
     }
       // VLOG(0) << "step3";
       // VLOG(0) << "fmha_out:" << fmha_out;
@@ -761,7 +774,7 @@ class FusedLLAMAOpKernel : public framework::OpKernel<T> {
       VLOG(0) << "step4";
       VLOG(0) << "Attn OutProject weight:" << *out_linear_weights[i];
       VLOG(0) << "Attn OutProject Out:" << *buf1;
-      PrintHalfMatrix(buf1->data(), buf1->numel(), "/root/paddlejob/workspace/env_run/zhengzekang/Debug/outproj_out"); 
+      // PrintHalfMatrix(buf1->data(), buf1->numel(), "/root/paddlejob/workspace/env_run/zhengzekang/Debug/outproj_out"); 
 
     }
       // VLOG(0) << "step4";
@@ -787,7 +800,7 @@ class FusedLLAMAOpKernel : public framework::OpKernel<T> {
       VLOG(0) << "step5";
       VLOG(0) << "ResidualAdd RMSNORM weight: " << *ffn_ln_scales[i];
       VLOG(0) << "ResidualAdd RMSNORM out:" << *buf1;
-      PrintHalfMatrix(buf1->data(), buf1->numel(), "/root/paddlejob/workspace/env_run/zhengzekang/Debug/rms_residual_out"); 
+      // PrintHalfMatrix(buf1->data(), buf1->numel(), "/root/paddlejob/workspace/env_run/zhengzekang/Debug/rms_residual_out"); 
     }
       // VLOG(0) << "step5";
       // VLOG(0) << "ResidualAdd RMSNORM weight: " << *ffn_ln_scales[i];
@@ -817,7 +830,7 @@ class FusedLLAMAOpKernel : public framework::OpKernel<T> {
       VLOG(0) << "step6";
       VLOG(0) << "FFN1 out:" << ffn1_dropout_out;
       VLOG(0) << "FFN1 out numel is: " << ffn1_dropout_out.numel(); 
-      PrintHalfMatrix(ffn1_dropout_out.data(), ffn1_dropout_out.numel(), "/root/paddlejob/workspace/env_run/zhengzekang/Debug/ffn1_out"); 
+      // PrintHalfMatrix(ffn1_dropout_out.data(), ffn1_dropout_out.numel(), "/root/paddlejob/workspace/env_run/zhengzekang/Debug/ffn1_out"); 
     }
       // VLOG(0) << "step6";
       // VLOG(0) << "FFN1 out:" << ffn1_dropout_out;
@@ -851,7 +864,7 @@ class FusedLLAMAOpKernel : public framework::OpKernel<T> {
     if(i==0){
       VLOG(0) << "step7";
       VLOG(0) << "ffn2_out:" << *buf1;
-      PrintHalfMatrix(buf1->data(), buf1->numel(), "/root/paddlejob/workspace/env_run/zhengzekang/Debug/ffn2_out"); 
+      // PrintHalfMatrix(buf1->data(), buf1->numel(), "/root/paddlejob/workspace/env_run/zhengzekang/Debug/ffn2_out"); 
     }
 #endif
 

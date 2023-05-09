@@ -30,8 +30,8 @@ def rms_norm(
     out = helper.create_variable_for_type_inference(dtype=x.dtype)
     helper.append_op(
         type='rms_norm',
-        inputs={'X': x, 'Weight': weight},
-        attrs={"Epsilon": epsilon, "Begin_norm_axis": begin_norm_axis},
-        outputs={'Out': out},
+        inputs={'x': x, 'weight': weight},
+        attrs={"epsilon": epsilon, "begin_norm_axis": begin_norm_axis},
+        outputs={'out': out},
     )
     return out
