@@ -460,6 +460,7 @@ void SolveInferMeta(const MetaTensor& x, const MetaTensor& y, MetaTensor* out);
 
 void TopPSamplingInferMeta(const MetaTensor& x,
                            const MetaTensor& ps,
+                           int random_seed,
                            MetaTensor* out,
                            MetaTensor* ids);
 
