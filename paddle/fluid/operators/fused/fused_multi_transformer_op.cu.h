@@ -172,7 +172,7 @@ struct Masked_multihead_attention_params {
 
   // The RoPE embedding, [2, B, 1, 1, dim_head]
   // rotary_emb_dims = 1 if pos_ids_extra is null else 2
-  const T *rotary_emb;
+  const float *rotary_emb;
   int rotary_emb_dims;
 
   int batch_size;
@@ -459,6 +459,7 @@ __global__ void masked_multihead_attention_kernel(
 
   __shared__ float red_smem[WARPS_PER_BLOCK * 2];
   using Qk_vec = typename Qk_vec_<T, Dh_MAX>::Type;
+  using Qk_vec_RoPE = typename Qk_vec_<float, Dh_MAX>::Type;
   __shared__ __align__(sizeof(Qk_vec)) T q_smem[Dh_MAX];
 
   const int bi = blockIdx.y;
@@ -527,18 +528,18 @@ __global__ void masked_multihead_attention_kernel(
 
     if (params.rotary_emb_dims != 0) {
       int rotary_offset = bi * Dh + tid * QK_VEC_SIZE;
-      const T *cos_base = params.rotary_emb;
-      const T *sin_base = params.rotary_emb + params.batch_size * Dh;
-      Qk_vec cos_emb, sin_emb;
+      const float *cos_base = params.rotary_emb;
+      const float *sin_base = params.rotary_emb + params.batch_size * Dh;
+      Qk_vec_RoPE cos_emb, sin_emb;
       zero(cos_emb);
       zero(sin_emb);
       cos_emb =
           (Dh == Dh_MAX || tid * QK_VEC_SIZE < Dh)
-              ? *reinterpret_cast<const Qk_vec *>(&cos_base[rotary_offset])
+              ? *reinterpret_cast<const Qk_vec_RoPE *>(&cos_base[rotary_offset])
               : cos_emb;
       sin_emb =
           (Dh == Dh_MAX || tid * QK_VEC_SIZE < Dh)
-              ? *reinterpret_cast<const Qk_vec *>(&sin_base[rotary_offset])
+              ? *reinterpret_cast<const Qk_vec_RoPE *>(&sin_base[rotary_offset])
               : sin_emb;
       apply_rotary_embedding(q, k, cos_emb, sin_emb);
     }
@@ -950,7 +951,7 @@ void fmha(const phi::GPUContext &dev_ctx,
   }
 
   if (rotary_emb_dims > 0) {
-    params.rotary_emb = rotary_tensor->data<T>();
+    params.rotary_emb = rotary_tensor->data<float>();
   } else {
     params.rotary_emb = nullptr;
   }
@@ -1335,8 +1336,8 @@ void qkv_bias_add_transpose_split(const phi::GPUContext &dev_ctx,
 
 template <typename T>
 __global__ void RotrayKernel(const T *input,
-                             const T *cos_emb,
-                             const T *sin_emb,
+                             const float *cos_emb,
+                             const float *sin_emb,
                              const int *sequence_lengths,
                              T *output,
                              const int rotary_emb_dims,
@@ -1357,12 +1358,12 @@ __global__ void RotrayKernel(const T *input,
     int left_idx = base_idx + 2 * ti;
     const int right_idx = base_idx + 2 * ti + 1;
     int emb_idx = bi * seq_len * last_dim + si * last_dim + 2 * ti;
-    T input_left = input[left_idx];
-    T input_right = input[right_idx];
-    T cos_tmp = cos_emb[emb_idx];
-    T sin_tmp = sin_emb[emb_idx];
-    T res1 = input_left * cos_tmp - input_right * sin_tmp;
-    T res2 = input_right * cos_tmp + input_left * sin_tmp;
+    float input_left = static_cast<float>(input[left_idx]);
+    float input_right = static_cast<float>(input[right_idx]);
+    float cos_tmp = cos_emb[emb_idx];
+    float sin_tmp = sin_emb[emb_idx];
+    T res1 = static_cast<T>(input_left * cos_tmp - input_right * sin_tmp);
+    T res2 = static_cast<T>(input_right * cos_tmp + input_left * sin_tmp);
     output[left_idx] = res1;
     output[right_idx] = res2;
   }
@@ -1374,7 +1375,7 @@ void rotary_qk(const phi::GPUContext &dev_ctx,
                T *k,              // kv
                const T *q_input,  // q
                const T *k_input,  // kv
-               const T *rotary_emb,
+               const float *rotary_emb,
                const int *sequence_lengths,
                const int rotary_emb_dims,
                const int batch_size,
@@ -1403,8 +1404,8 @@ void rotary_qk(const phi::GPUContext &dev_ctx,
     }
   };
   int BlockSize = getBlockSize(last_dim / 2);
-  const T *cos_emb = rotary_emb;
-  const T *sin_emb = rotary_emb + batch_size * seq_len * dim_head;
+  const float *cos_emb = rotary_emb;
+  const float *sin_emb = rotary_emb + batch_size * seq_len * dim_head;
   RotrayKernel<<<grid, BlockSize, 0, dev_ctx.stream()>>>(
       q_input,
       cos_emb,

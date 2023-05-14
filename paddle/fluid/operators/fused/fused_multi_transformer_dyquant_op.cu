@@ -604,7 +604,7 @@ VLOG(0) << "qkv_weights_scales:" << *(qkv_weights_scales[i]);
         // q_transpose_out_data [bs, head_num, seq_len, dim_head]
         // kv_transpose_out_data [2， bs, head_num, seq_len, dim_head]
         if (rotary_emb_dims != 0) {
-          auto *rotary_emb_data = rotary_tensor->data<T>();
+          auto *rotary_emb_data = rotary_tensor->data<float>();
           const int *sequence_lengths_data =
               encoder_remove_padding ? sequence_lengths->data<int>() : nullptr;
           rotary_qk(dev_ctx,
@@ -712,7 +712,7 @@ VLOG(0) << "qkv_weights_scales:" << *(qkv_weights_scales[i]);
         // q_transpose_out_data [bs, head_num, seq_len, dim_head]
         // kv_transpose_out_data [2， bs, head_num, seq_len, dim_head]
         if (rotary_emb_dims != 0) {
-          auto *rotary_emb_data = rotary_tensor->data<T>();
+          auto *rotary_emb_data = rotary_tensor->data<float>();
           const int *sequence_lengths_data =
               encoder_remove_padding ? sequence_lengths->data<int>() : nullptr;
           rotary_qk(dev_ctx,
