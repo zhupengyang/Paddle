@@ -459,7 +459,7 @@ __global__ void masked_multihead_attention_kernel(
 
   __shared__ float red_smem[WARPS_PER_BLOCK * 2];
   using Qk_vec = typename Qk_vec_<T, Dh_MAX>::Type;
-  using Qk_vec_RoPE = typename Qk_vec_<float, Dh_MAX>::Type;
+  using Qk_vec_RoPE = typename Qk_vec_RoPE_<T, float, Dh_MAX>::Type;
   __shared__ __align__(sizeof(Qk_vec)) T q_smem[Dh_MAX];
 
   const int bi = blockIdx.y;

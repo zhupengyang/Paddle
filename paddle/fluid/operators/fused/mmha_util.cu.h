@@ -78,6 +78,59 @@ struct bf16_8_t {
 };
 #endif
 
+// RoPE Type
+template <typename T1, typename T2, int Dh>
+struct Qk_vec_RoPE_ {};
+template <>
+struct Qk_vec_RoPE_<float16, float, 32> {
+  using Type = float2;
+};
+template <>
+struct Qk_vec_RoPE_<float16, float, 64> {
+  using Type = float2;
+};
+template <>
+struct Qk_vec_RoPE_<float16, float, 128> {
+  using Type = float4;
+};
+template <>
+struct Qk_vec_RoPE_<float16, float, 256> {
+  using Type = Float8_;
+};
+template <>
+struct Qk_vec_RoPE_<bfloat16, float, 32> {
+  using Type = float2;
+};
+template <>
+struct Qk_vec_RoPE_<bfloat16, float, 64> {
+  using Type = float2;
+};
+template <>
+struct Qk_vec_RoPE_<bfloat16, float, 128> {
+  using Type = float4;
+};
+template <>
+struct Qk_vec_RoPE_<bfloat16, float, 256> {
+  using Type = Float8_;
+};
+template <>
+struct Qk_vec_RoPE_<float, float, 32> {
+  using Type = float;
+};
+template <>
+struct Qk_vec_RoPE_<float, float, 64> {
+  using Type = float2;
+};
+template <>
+struct Qk_vec_RoPE_<float, float, 128> {
+  using Type = float4;
+};
+template <>
+struct Qk_vec_RoPE_<float, float, 256> {
+  using Type = float4;
+};
+//------------------------------------
+
 template <typename T, int Dh>
 struct Qk_vec_ {};
 template <>
