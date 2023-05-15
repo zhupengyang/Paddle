@@ -143,7 +143,8 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
     int output_size = 3 * hidden_size;
     int input_size = dim_embed;
 
-    bool compute_bias = qkv_biases.size() > 0 && time_step == nullptr;
+    bool compute_bias = qkv_biases.size() > 0;
+
     // (transA, transB, compute_bias) = (false, trans_qkvw, false)
     // Since we fused QKVBias into QKVBiasAddTransposeSplit kernel, here we
     // set compute_bias as false.
