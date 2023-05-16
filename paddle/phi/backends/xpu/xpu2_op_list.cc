@@ -161,7 +161,6 @@ XPUOpMap& get_kl2_ops() {
       {"conv2d_transpose", XPUKernelSet({phi::DataType::FLOAT32})},
       {"cumsum",
        XPUKernelSet({phi::DataType::FLOAT32,
-                     phi::DataType::FLOAT16,
                      phi::DataType::INT32,
                      phi::DataType::INT64})},
       {"cumprod",
@@ -344,6 +343,8 @@ XPUOpMap& get_kl2_ops() {
                      phi::DataType::FLOAT16})},
       {"fused_multi_transformer_xpu",
        XPUKernelSet({phi::DataType::FLOAT32, phi::DataType::FLOAT16})},
+      {"fused_multi_transformer_dyquant_xpu",
+       XPUKernelSet({phi::DataType::FLOAT16})},
       {"unfold",
        XPUKernelSet({phi::DataType::FLOAT32, phi::DataType::FLOAT16})},
       {"unfold_grad",
@@ -897,6 +898,11 @@ XPUOpMap& get_kl2_ops() {
                      phi::DataType::FLOAT64,
                      phi::DataType::INT32,
                      phi::DataType::INT64})},
+      {"save_with_output", XPUKernelSet({phi::DataType::ALL_DTYPE})},
+      {"set_stop_value", XPUKernelSet({phi::DataType::ALL_DTYPE})},
+      {"get_token_penalty", XPUKernelSet({phi::DataType::ALL_DTYPE})},
+      {"get_token_penalty_once", XPUKernelSet({phi::DataType::ALL_DTYPE})},
+      {"top_p_sampling", XPUKernelSet({phi::DataType::FLOAT32, phi::DataType::FLOAT16})},
   };
 
   return s_xpu2_kernels;

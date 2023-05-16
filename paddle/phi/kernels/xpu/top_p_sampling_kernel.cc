@@ -34,11 +34,6 @@ void TopPSamplingKernel(const Context& dev_ctx,
                         const DenseTensor& ps,
                         DenseTensor* out,
                         DenseTensor* ids) {
-  LOG(INFO) << "x.dims=" << x.dims()
-    << ", ps.dims=" << ps.dims()
-    << ", out.dims=" << out->dims()
-    << ", ids.dims=" << ids->dims();
-
   using XPUType = typename XPUTypeTrait<T>::Type;
 
   const XPUType* x_ptr = reinterpret_cast<const XPUType*>(x.data<T>());

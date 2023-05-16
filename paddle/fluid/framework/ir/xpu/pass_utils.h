@@ -66,6 +66,26 @@ void PrepareWeight(Graph* graph,
 void PrepareBias(
     Graph* graph, Scope* scope, BlockDesc* block, Node* src, Node** dst);
 
+template <typename T>
+void TransWeight(Graph* graph,
+                 Scope* scope,
+                 BlockDesc* block,
+                 Node* src,
+                 Node** dst);
+
+template <typename T>
+void TransWeight(Graph* graph,
+                 Scope* scope,
+                 BlockDesc* block,
+                 const std::string& src_name,
+                 const phi::DenseTensor& dst_tensor,
+                 Node** dst);
+
+void PrepareXPUWeightScale(Graph* graph,
+                 Scope* scope,
+                 BlockDesc* block,
+                 Node* src,
+                 Node** dst);
 }  // namespace ir
 }  // namespace framework
 }  // namespace paddle

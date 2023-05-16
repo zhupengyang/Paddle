@@ -104,6 +104,7 @@ size_t HashTensor(const phi::DenseTensor& in) {
 
 template size_t HashTensor<int16_t>(const phi::DenseTensor& in);
 template size_t HashTensor<float>(const phi::DenseTensor& in);
+template size_t HashTensor<int8_t>(const phi::DenseTensor& in);
 
 std::string GetPrefixWithoutHash(const std::string& name) {
   std::size_t found = name.find("_#");
@@ -221,6 +222,89 @@ void PrepareBias(
     block_dst_desc->SetShape(dst_desc.GetShape());
     block_dst_desc->SetDataType(dst_desc.GetDataType());
     Assign(dst_tensor, scope->Var(dst_name)->GetMutable<phi::DenseTensor>());
+  }
+}
+
+template <typename T>
+void TransWeight(Graph* graph,
+                 Scope* scope,
+                 BlockDesc* block,
+                 const std::string& src_name,
+                 const phi::DenseTensor& dst_tensor,
+                 Node** dst) {
+  size_t dst_hash = HashTensor<T>(dst_tensor);
+  std::string pre_name = GetPrefixWithoutHash(src_name);
+  std::string dst_name = pre_name + "_#" + std::to_string(dst_hash);
+  *dst = FindNodeWithName(graph, dst_name);
+  if (*dst == nullptr) {
+    // Create dst node
+    // Update dst var_desc in block
+    VarDesc dst_desc(dst_name);
+    dst_desc.SetPersistable(true);
+    dst_desc.SetShape(vectorize(dst_tensor.dims()));
+    dst_desc.SetDataType(framework::TransToProtoVarType(dst_tensor.dtype()));
+    *dst = graph->CreateVarNode(&dst_desc);
+    auto* block_dst_desc = block->Var(dst_name);
+    block_dst_desc->SetPersistable(dst_desc.Persistable());
+    block_dst_desc->SetShape(dst_desc.GetShape());
+    block_dst_desc->SetDataType(dst_desc.GetDataType());
+    // Find dst variable in scope
+    auto* dst_var = scope->FindVar(dst_name);
+    if (dst_var == nullptr) {
+      Assign(dst_tensor, scope->Var(dst_name)->GetMutable<phi::DenseTensor>());
+    }
+  }
+}
+
+template void TransWeight<int8_t>(Graph* graph, Scope* scope, BlockDesc* block, const std::string& src_name, const phi::DenseTensor& dst_tensor, Node** dst);
+
+template <typename T>
+void TransWeight(Graph* graph,
+                 Scope* scope,
+                 BlockDesc* block,
+                 Node* src,
+                 Node** dst) {
+  auto src_name = src->Name();
+  auto* src_tensor = scope->Var(src_name)->GetMutable<phi::DenseTensor>();
+  phi::DenseTensor dst_tensor;
+  Transpose2D(src_tensor, &dst_tensor);
+
+  TransWeight<T>(graph, scope, block, src_name, dst_tensor, dst);
+}
+
+template void TransWeight<int8_t>(Graph* graph, Scope* scope, BlockDesc* block, Node* src, Node** dst);
+
+void PrepareXPUWeightScale(Graph* graph,
+                 Scope* scope,
+                 BlockDesc* block,
+                 Node* src,
+                 Node** dst) {
+  auto src_name = src->Name();
+  auto* src_tensor = scope->Var(src_name)->GetMutable<phi::DenseTensor>();
+  phi::DenseTensor dst_tensor;
+  ScaleToMax(*src_tensor, &dst_tensor);
+
+  size_t dst_hash = HashTensor<float>(dst_tensor);
+  std::string pre_name = GetPrefixWithoutHash(src_name);
+  std::string dst_name = pre_name + "_#" + std::to_string(dst_hash);
+  *dst = FindNodeWithName(graph, dst_name);
+  if (*dst == nullptr) {
+    // Create dst node
+    // Update dst var_desc in block
+    VarDesc dst_desc(dst_name);
+    dst_desc.SetPersistable(true);
+    dst_desc.SetShape(vectorize(dst_tensor.dims()));
+    dst_desc.SetDataType(framework::TransToProtoVarType(dst_tensor.dtype()));
+    *dst = graph->CreateVarNode(&dst_desc);
+    auto* block_dst_desc = block->Var(dst_name);
+    block_dst_desc->SetPersistable(dst_desc.Persistable());
+    block_dst_desc->SetShape(dst_desc.GetShape());
+    block_dst_desc->SetDataType(dst_desc.GetDataType());
+    // Find dst variable in scope
+    auto* dst_var = scope->FindVar(dst_name);
+    if (dst_var == nullptr) {
+      Assign(dst_tensor, scope->Var(dst_name)->GetMutable<phi::DenseTensor>());
+    }
   }
 }
 

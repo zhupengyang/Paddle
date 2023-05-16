@@ -13,16 +13,55 @@
 // limitations under the License.
 
 #include "paddle/fluid/framework/ir/xpu/quant_utils.h"
+#include <thread>
 #include <vector>
 #include "paddle/fluid/platform/device_context.h"
 #include "paddle/phi/core/enforce.h"
 #include "paddle/phi/kernels/assign_kernel.h"
 #include "paddle/phi/kernels/cast_kernel.h"
 #include "paddle/phi/kernels/transpose_kernel.h"
+#include "paddle/phi/kernels/scale_kernel.h"
+
+DECLARE_int32(fuse_multi_transformer_threads);
+PADDLE_DEFINE_EXPORTED_int32(
+    fuse_multi_transformer_threads,
+    1,
+    "fuse_multi_transformer is the thread of fuse thread cpu "
+    "The default value is a experimental result. If the "
+    "fuse_multi_transformer is 1, it means that the thread num is.");
 
 namespace paddle {
 namespace framework {
 namespace ir {
+
+// out = in * 127
+void ScaleToMax(const phi::DenseTensor& in, phi::DenseTensor* out) {
+  auto* cpu_ctx = static_cast<phi::CPUContext*>(
+      platform::DeviceContextPool::Instance().Get(phi::CPUPlace()));
+  out->Resize(in.dims());
+  out->set_type(phi::DataType::FLOAT32);
+  out->set_layout(in.layout());
+
+  phi::DenseTensor fp32_tensor;
+  fp32_tensor.Resize(in.dims());
+  fp32_tensor.set_type(phi::DataType::FLOAT32);
+  fp32_tensor.set_layout(in.layout());
+
+  switch (in.dtype()) {
+    case phi::DataType::FLOAT16:
+      phi::CastKernel<phi::dtype::float16>(*cpu_ctx, in, phi::DataType::FLOAT32, &fp32_tensor);
+      phi::ScaleKernel<float>(*cpu_ctx, fp32_tensor, 127.0, 0.0, false, out);
+      break;
+    case phi::DataType::FLOAT32:
+      phi::ScaleKernel<float>(*cpu_ctx, in, 127.0, 0.0, false, out);
+      break;
+    default:
+      PADDLE_THROW(platform::errors::InvalidArgument(
+          "Only support fp16 and fp32, but received dtype is %s.",
+          phi::DataTypeToString(in.dtype())));
+      break;
+  }
+}
 
 void Assign(const phi::DenseTensor& in, phi::DenseTensor* out) {
   auto* cpu_ctx = static_cast<phi::CPUContext*>(
@@ -48,6 +87,16 @@ void Transpose2D(phi::DenseTensor* in, phi::DenseTensor* out) {
   out_ptr->set_type(in->type());
   out_ptr->set_layout(in->layout());
 
+  phi::DenseTensor int32_tensor;
+  int32_tensor.Resize(in_dims);
+  int32_tensor.set_type(phi::DataType::INT32);
+  int32_tensor.set_layout(in->layout());
+
+  phi::DenseTensor int32_trans_tensor;
+  int32_trans_tensor.Resize({in_dims[1], in_dims[0]});
+  int32_trans_tensor.set_type(phi::DataType::INT32);
+  int32_trans_tensor.set_layout(in->layout());
+
   auto* cpu_ctx = static_cast<phi::CPUContext*>(
       platform::DeviceContextPool::Instance().Get(phi::CPUPlace()));
   std::vector<int> axis{1, 0};
@@ -58,9 +107,17 @@ void Transpose2D(phi::DenseTensor* in, phi::DenseTensor* out) {
     case phi::DataType::FLOAT32:
       phi::TransposeKernel<float>(*cpu_ctx, *in, axis, out_ptr);
       break;
+    case phi::DataType::INT8:
+      // 1. cast from int8 to int32
+      phi::CastKernel<int8_t>(*cpu_ctx, *in, phi::DataType::INT32, &int32_tensor);
+      // 2. transpose2d
+      phi::TransposeKernel<int>(*cpu_ctx, int32_tensor, axis, &int32_trans_tensor);
+      // 3. cast from int32 to int8
+      phi::CastKernel<int>(*cpu_ctx, int32_trans_tensor, phi::DataType::INT8, out_ptr);
+      break;
     default:
       PADDLE_THROW(platform::errors::InvalidArgument(
-          "Only support fp16 and fp32, but received dtype is %s.",
+          "Only support fp16, fp32 and int8, but received dtype is %s.",
           phi::DataTypeToString(in->dtype())));
       break;
   }
@@ -104,14 +161,46 @@ void CastToFp32(phi::DenseTensor* in, phi::DenseTensor* out) {
   }
 }
 
-static float FindMaxAbs(const float* data, int len) {
+void ThFindMaxAbs(int id, int start, int end, const float* data, float* out) {
   float max_f = 0.0f;
-  for (int i = 0; i < len; ++i) {
+  for (int i = start; i < end; ++i) {
     float max = std::abs(data[i]);
     if (max > max_f) {
       max_f = max;
     }
   }
+  out[id] = max_f;
+}
+
+static float FindMaxAbs(const float* data, int len) {
+  int32_t numThreads = FLAGS_fuse_multi_transformer_threads;
+  VLOG(1) << "current cpu thread num " << numThreads;
+  std::vector<std::thread> threads;
+  threads.reserve(numThreads);
+  int chunkSize = len / numThreads;
+  int remainder = len % numThreads;
+  int start = 0;
+  int end = 0;
+  float* out = new float[numThreads];
+  for (int i = 0; i < numThreads; i++) {
+    start = end;
+    end = start + chunkSize + (remainder-- > 0 ? 1 : 0);
+    threads.emplace_back(
+        ThFindMaxAbs, i, start, end, std::ref(data), std::ref(out));
+  }
+
+  for (auto& thread : threads) {
+    thread.join();
+  }
+
+  // need
+  float max_f = out[0];
+  for (int i = 1; i < numThreads; i++) {
+    if (out[i] > max_f) {
+      max_f = out[i];
+    }
+  }
+  delete[] out;
   return max_f;
 }
 
@@ -189,6 +278,17 @@ static T Fp32ToIntx(const float f, float max) {
   return ret;
 }
 
+void ThFp32ToIntx(int id,
+                  int start,
+                  int end,
+                  const float* src_ptr,
+                  int16_t* dst_ptr,
+                  float max_val) {
+  for (int i = start; i < end; i++) {
+    dst_ptr[i] = Fp32ToIntx<int16_t, 32767>(src_ptr[i], max_val);
+  }
+}
+
 template <typename T>
 static void QuantFP32ToIntX(const float* src_ptr,
                             T* dst_ptr,
@@ -202,8 +302,27 @@ void QuantFP32ToIntX<int16_t>(const float* src_ptr,
                               int16_t* dst_ptr,
                               float max_val,
                               int numel) {
-  for (int i = 0; i < numel; i++) {
-    dst_ptr[i] = Fp32ToIntx<int16_t, 32767>(src_ptr[i], max_val);
+  int32_t numThreads = FLAGS_fuse_multi_transformer_threads;
+  std::vector<std::thread> threads;
+  threads.reserve(numThreads);
+  int chunkSize = numel / numThreads;
+  int remainder = numel % numThreads;
+  int start = 0;
+  int end = 0;
+  for (int i = 0; i < numThreads; i++) {
+    start = end;
+    end = start + chunkSize + (remainder-- > 0 ? 1 : 0);
+    threads.emplace_back(ThFp32ToIntx,
+                         i,
+                         start,
+                         end,
+                         std::ref(src_ptr),
+                         std::ref(dst_ptr),
+                         max_val);
+  }
+
+  for (auto& thread : threads) {
+    thread.join();
   }
 }
 
