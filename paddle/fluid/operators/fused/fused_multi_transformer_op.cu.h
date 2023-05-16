@@ -176,6 +176,7 @@ struct Masked_multihead_attention_params {
   int rotary_emb_dims;
 
   int batch_size;
+  int cache_batch_size;
   int num_head;
   int timestep;  // cache_seq_length
   int max_seq_length;
@@ -438,6 +439,11 @@ template <typename T,
 __global__ void masked_multihead_attention_kernel(
     Masked_multihead_attention_params<T> params) {
 #if CUDA_ARCH_FP16_SUPPORTED(__CUDA_ARCH__)
+  const int bi = blockIdx.y;
+  if (params.sequence_lengths && params.sequence_lengths[bi] == 0) {
+    return;
+  }
+
   typedef PDDataTypeTraits<T> traits_;
   typedef typename traits_::DataType DataType_;
 
@@ -462,7 +468,6 @@ __global__ void masked_multihead_attention_kernel(
   using Qk_vec_RoPE = typename Qk_vec_RoPE_<T, float, Dh_MAX>::Type;
   __shared__ __align__(sizeof(Qk_vec)) T q_smem[Dh_MAX];
 
-  const int bi = blockIdx.y;
   const int hi = blockIdx.x;
   const int bhi = bi * params.num_head + hi;
   const int tid = threadIdx.x;
@@ -760,7 +765,7 @@ __global__ void masked_multihead_attention_kernel(
   int vo = tid / THREADS_PER_VALUE;
   int vi = (tid % THREADS_PER_VALUE) * V_VEC_SIZE;
 
-  T *v_cache = &params.cache_kv[params.batch_size * params.num_head *
+  T *v_cache = &params.cache_kv[params.cache_batch_size * params.num_head *
                                     params.max_seq_length * Dh +
                                 bhi * params.max_seq_length * Dh + vi];
 
@@ -931,6 +936,7 @@ void fmha(const phi::GPUContext &dev_ctx,
           phi::DenseTensor *cache_kv_tensor,
           phi::DenseTensor *out_tensor,
           int batch_size,
+          int cache_batch_size,
           int max_seq_length,
           int num_head,
           int dim_head,
@@ -957,6 +963,7 @@ void fmha(const phi::GPUContext &dev_ctx,
   }
 
   params.batch_size = batch_size;
+  params.cache_batch_size = cache_batch_size;
   params.num_head = num_head;
   params.timestep = timestep;
   params.max_seq_length = max_seq_length;
@@ -999,6 +1006,7 @@ void fmha(const phi::GPUContext &dev_ctx,
           phi::DenseTensor *cache_kv_tensor,
           phi::DenseTensor *out_tensor,
           int batch_size,
+          int cache_bsz,
           int max_seq_length,
           int num_head,
           int dim_head,
@@ -1014,6 +1022,7 @@ void fmha(const phi::GPUContext &dev_ctx,
           cache_kv_tensor,
           out_tensor,
           batch_size,
+          cache_bsz,
           max_seq_length,
           num_head,
           dim_head,
