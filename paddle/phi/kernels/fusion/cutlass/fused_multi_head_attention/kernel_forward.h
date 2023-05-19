@@ -416,8 +416,6 @@ struct AttentionKernel {
     cutlass::Array<accum_t, kQueriesPerBlock> m_prime;
     cutlass::Array<accum_t, kQueriesPerBlock> s_prime;
     cutlass::Array<accum_t, kQueriesPerBlock> mi;
-    cutlass::Array<accum_t, kQueriesPerBlock * MM0::MmaCore::WarpCount::kN>
-        addition_storage;
   };
 
   struct SharedStorageEpilogueAtEnd : ScalingCoefs {
@@ -719,7 +717,6 @@ struct AttentionKernel {
                                 mi,
                                 m_prime,
                                 s_prime,
-                                shared_storage.addition_storage,
                                 lane_id(),
                                 thread_id(),
                                 warp_id(),
@@ -925,7 +922,6 @@ struct AttentionKernel {
       cutlass::Array<accum_t, kQueriesPerBlock>& mi,
       cutlass::Array<accum_t, kQueriesPerBlock>& m_prime,
       cutlass::Array<accum_t, kQueriesPerBlock>& s_prime,
-      cutlass::Array<accum_t, kQueriesPerBlock * MM0::MmaCore::WarpCount::kN>& addition_storage,
       int8_t lane_id,
       int8_t thread_id,
       int8_t warp_id,
@@ -948,7 +944,6 @@ struct AttentionKernel {
         kWarpSize>::Iterator;
     // Convert to `accum_t` (rather than double)
     constexpr float kLog2e = 1.4426950408889634074; // log_2(e) = M_LOG2E
-    static constexpr int kLinesPerWarp = kQueriesPerBlock / kNumWarpsPerBlock;
     if (!kIsFirst) {
       if (thread_id < kQueriesPerBlock) {
         m_prime[thread_id] = mi[thread_id];
@@ -1019,20 +1014,9 @@ struct AttentionKernel {
                     lane_id, total_row, [](accum_t a, accum_t b) {
                       return a + b;
                     })) {
-              // atomicAdd(&s_prime[accum_m], total_row);
-              addition_storage
-                  [accum_m + kQueriesPerBlock * tile_offset.column()] =
-                      total_row;
+              atomicAdd(&s_prime[accum_m], total_row);
             }
           });
-      __syncthreads();
-      int id = warp_id * kLinesPerWarp + lane_id;
-      total_row = s_prime[id];
-      CUTLASS_PRAGMA_UNROLL
-      for (int i = 0; i < MM0::MmaCore::WarpCount::kN; ++i) {
-        total_row += addition_storage[id + kQueriesPerBlock * i];
-      }
-      s_prime[id] = total_row;
     }
   }
 

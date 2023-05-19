@@ -32,7 +32,6 @@
 #include "paddle/fluid/inference/api/resource_manager.h"
 #include "paddle/fluid/platform/device/gpu/gpu_types.h"
 #include "paddle/fluid/platform/float16.h"
-#include "paddle/phi/common/bfloat16.h"
 #include "paddle/fluid/string/printf.h"
 #ifdef PADDLE_WITH_TESTING
 #include <gtest/gtest.h>
@@ -41,7 +40,6 @@
 
 namespace paddle_infer {
 using float16 = paddle::platform::float16;
-using bfloat16 = phi::dtype::bfloat16;
 namespace experimental {
 class InternalUtils;
 };

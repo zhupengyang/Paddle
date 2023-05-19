@@ -430,8 +430,6 @@ public:
     cutlass::Array<ElementAccumulator, kQueriesPerBlock> m_prime;
     cutlass::Array<ElementAccumulator, kQueriesPerBlock> s_prime;
     cutlass::Array<ElementAccumulator, kQueriesPerBlock> mi;
-    cutlass::Array<accum_t, kQueriesPerBlock * MM0::MmaCore::WarpCount::kN>
-        addition_storage;
   };
 
   struct SharedStorageEpilogueAtEnd : ScalingCoefs {
@@ -763,8 +761,6 @@ public:
                       // - mi)
                       MM0::ScalingCoefsUpdater::update<
                           kQueriesPerBlock,
-                          MM0::MmaCore::WarpCount::kCount,
-                          MM0::MmaCore::WarpCount::kN,
                           kFullColumns,
                           kIsFirst,
                           kKeepOutputInRF>(
@@ -773,7 +769,6 @@ public:
                           mi,
                           m_prime,
                           s_prime,
-                          shared_storage.addition_storage,
                           lane_id(),
                           thread_id(),
                           warp_id(),

@@ -96,7 +96,6 @@ class FusedMultiTransformerINT8OpKernel : public framework::OpKernel<T> {
     auto *src_mask = ctx.Input<phi::DenseTensor>("SrcMask");
     auto cache_kvs = ctx.MultiInput<phi::DenseTensor>("CacheKV");
     auto cache_kv_outs = ctx.MultiOutput<phi::DenseTensor>("CacheKVOut");
-    int cache_bsz = cache_kvs[0]->dims()[1];
     // auto *time_step = ctx.Input<phi::DenseTensor>("TimeStep");
 
     auto out_seq_len = seq_len;
@@ -353,7 +352,6 @@ class FusedMultiTransformerINT8OpKernel : public framework::OpKernel<T> {
                 cache_kv_out,
                 &fmha_out,
                 bsz,
-                cache_bsz,
                 max_seq_len,
                 num_head,
                 dim_head,
@@ -384,7 +382,7 @@ class FusedMultiTransformerINT8OpKernel : public framework::OpKernel<T> {
         // [2, bsz, num_head, max_seq_len, head_dim]
         int max_seq_len = cache_kv_out->dims()[3];
         T *cache_kv_data = cache_kv_out->data<T>();
-        int64_t cache_k_size = cache_bsz * num_head * max_seq_len * dim_head;
+        int64_t cache_k_size = bsz * num_head * max_seq_len * dim_head;
 
         T *cache_k_ptr = cache_kv_data;
         T *cache_v_ptr = cache_kv_data + cache_k_size;

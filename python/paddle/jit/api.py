@@ -1114,14 +1114,13 @@ def save(layer, path, input_spec=None, **configs):
                     param_or_buffer_tensor = scope.var(
                         param_or_buffer.name
                     ).get_tensor()
-                    if state_var_dict.get(param_or_buffer.name, None) is not None:
-                        src_tensor = (
-                            state_var_dict[param_or_buffer.name]
-                            .value()
-                            .get_tensor()
-                        )
-                    else:
-                        src_tensor = param_or_buffer.value().get_tensor()
+                    # src_tensor = param_or_buffer.value().get_tensor()
+                    
+                    src_tensor = (
+                        state_var_dict[param_or_buffer.name]
+                        .value()
+                        .get_tensor()
+                    )
                     param_or_buffer_tensor._share_data_with(src_tensor)
                 # record var info
                 if param_or_buffer.name not in extra_var_info:
