@@ -248,12 +248,11 @@ struct Masked_multihead_attention_params {
 
   // The RoPE embedding, [2, B, rotary_seq_len, 1, dim_head]
   // rotary_emb_dims = 1 if pos_ids_extra is null else 2
-  const float *rotary_emb;
+  const T *rotary_emb;
   int rotary_emb_dims;
   int rotary_seq_len = 1; 
 
   int batch_size;
-  int cache_batch_size;
   int num_head;
   int timestep;  // cache_seq_length
   int max_seq_length;
@@ -519,11 +518,6 @@ template <typename T,
 __global__ void masked_multihead_attention_kernel(
     Masked_multihead_attention_params<T> params) {
 #if CUDA_ARCH_FP16_SUPPORTED(__CUDA_ARCH__)
-  const int bi = blockIdx.y;
-  if (params.sequence_lengths && params.sequence_lengths[bi] == 0) {
-    return;
-  }
-
   typedef PDDataTypeTraits<T> traits_;
   typedef typename traits_::DataType DataType_;
 
@@ -545,9 +539,9 @@ __global__ void masked_multihead_attention_kernel(
 
   __shared__ float red_smem[WARPS_PER_BLOCK * 2];
   using Qk_vec = typename Qk_vec_<T, Dh_MAX>::Type;
-  using Qk_vec_RoPE = typename Qk_vec_RoPE_<T, float, Dh_MAX>::Type;
   __shared__ __align__(sizeof(Qk_vec)) T q_smem[Dh_MAX];
 
+  const int bi = blockIdx.y;
   const int hi = blockIdx.x;
   const int bhi = bi * params.num_head + hi;
   const int tid = threadIdx.x;
@@ -619,27 +613,21 @@ __global__ void masked_multihead_attention_kernel(
       k = add(k, k_bias);
     }
 
-
-        q = add(q, q_bias);
-    // TODO(wangxi): See this https://github.com/microsoft/unilm/issues/510
-    //   we may not require k_bias.
-    k = add(k, k_bias);
-
     if(!params.neox_rotary_style){
       if (params.rotary_emb_dims != 0) {
         int rotary_offset = bi * Dh + tid * QK_VEC_SIZE;
         const T *cos_base = params.rotary_emb;
         const T *sin_base = params.rotary_emb + params.batch_size * Dh;
-        Qk_vec_RoPE cos_emb, sin_emb;
+        Qk_vec cos_emb, sin_emb;
         zero(cos_emb);
         zero(sin_emb);
         cos_emb =
             (Dh == Dh_MAX || tid * QK_VEC_SIZE < Dh)
-                ? *reinterpret_cast<const Qk_vec_RoPE *>(&cos_base[rotary_offset])
+                ? *reinterpret_cast<const Qk_vec *>(&cos_base[rotary_offset])
                 : cos_emb;
         sin_emb =
             (Dh == Dh_MAX || tid * QK_VEC_SIZE < Dh)
-                ? *reinterpret_cast<const Qk_vec_RoPE *>(&sin_base[rotary_offset])
+                ? *reinterpret_cast<const Qk_vec *>(&sin_base[rotary_offset])
                 : sin_emb;
         apply_rotary_embedding(q, k, cos_emb, sin_emb);
       }
@@ -865,7 +853,7 @@ __global__ void masked_multihead_attention_kernel(
   int vo = tid / THREADS_PER_VALUE;
   int vi = (tid % THREADS_PER_VALUE) * V_VEC_SIZE;
 
-  T *v_cache = &params.cache_kv[params.cache_batch_size * params.num_head *
+  T *v_cache = &params.cache_kv[params.batch_size * params.num_head *
                                     params.max_seq_length * Dh +
                                 bhi * params.max_seq_length * Dh + vi];
 
@@ -1039,7 +1027,6 @@ void fmha(const phi::GPUContext &dev_ctx,
           phi::DenseTensor *cache_kv_tensor,
           phi::DenseTensor *out_tensor,
           int batch_size,
-          int cache_batch_size,
           int max_seq_length,
           int num_head,
           int dim_head,
@@ -1067,13 +1054,12 @@ void fmha(const phi::GPUContext &dev_ctx,
   }
 
   if (rotary_emb_dims > 0) {
-    params.rotary_emb = rotary_tensor->data<float>();
+    params.rotary_emb = rotary_tensor->data<T>();
   } else {
     params.rotary_emb = nullptr;
   }
 
   params.batch_size = batch_size;
-  params.cache_batch_size = cache_batch_size;
   params.num_head = num_head;
   params.timestep = timestep;
   params.max_seq_length = max_seq_length;
@@ -1116,7 +1102,6 @@ void fmha(const phi::GPUContext &dev_ctx,
           phi::DenseTensor *cache_kv_tensor,
           phi::DenseTensor *out_tensor,
           int batch_size,
-          int cache_bsz,
           int max_seq_length,
           int num_head,
           int dim_head,
@@ -1134,7 +1119,6 @@ void fmha(const phi::GPUContext &dev_ctx,
           cache_kv_tensor,
           out_tensor,
           batch_size,
-          cache_bsz,
           max_seq_length,
           num_head,
           dim_head,
@@ -1462,9 +1446,9 @@ __global__ void NeoXRotaryKernel(const T *input,
 
 
 template <typename T>
-__global__ void RotrayKernel(const T *input,
-                             const float *cos_emb,
-                             const float *sin_emb,
+__global__ void RotaryKernel(const T *input,
+                             const T *cos_emb,
+                             const T *sin_emb,
                              const int *sequence_lengths,
                              T *output,
                              const int rotary_emb_dims,
@@ -1485,12 +1469,12 @@ __global__ void RotrayKernel(const T *input,
     int left_idx = base_idx + 2 * ti;
     const int right_idx = base_idx + 2 * ti + 1;
     int emb_idx = bi * seq_len * last_dim + si * last_dim + 2 * ti;
-    float input_left = static_cast<float>(input[left_idx]);
-    float input_right = static_cast<float>(input[right_idx]);
-    float cos_tmp = cos_emb[emb_idx];
-    float sin_tmp = sin_emb[emb_idx];
-    T res1 = static_cast<T>(input_left * cos_tmp - input_right * sin_tmp);
-    T res2 = static_cast<T>(input_right * cos_tmp + input_left * sin_tmp);
+    T input_left = input[left_idx];
+    T input_right = input[right_idx];
+    T cos_tmp = cos_emb[emb_idx];
+    T sin_tmp = sin_emb[emb_idx];
+    T res1 = input_left * cos_tmp - input_right * sin_tmp;
+    T res2 = input_right * cos_tmp + input_left * sin_tmp;
     output[left_idx] = res1;
     output[right_idx] = res2;
   }
@@ -1502,7 +1486,7 @@ void rotary_qk(const phi::GPUContext &dev_ctx,
                T *k,              // kv
                const T *q_input,  // q
                const T *k_input,  // kv
-               const float *rotary_emb,
+               const T *rotary_emb,
                const int *sequence_lengths,
                const int rotary_emb_dims,
                const int batch_size,
@@ -1532,8 +1516,8 @@ void rotary_qk(const phi::GPUContext &dev_ctx,
     }
   };
   int BlockSize = getBlockSize(last_dim / 2);
-  const float *cos_emb = rotary_emb;
-  const float *sin_emb = rotary_emb + batch_size * seq_len * dim_head;
+  const T *cos_emb = rotary_emb;
+  const T *sin_emb = rotary_emb + batch_size * seq_len * dim_head;
   if(!neox_rotary_style){
     RotaryKernel<<<grid, BlockSize, 0, dev_ctx.stream()>>>(
       q_input,
