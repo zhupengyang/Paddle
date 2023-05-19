@@ -171,6 +171,7 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
         FMHARef<T>(dev_ctx, bsz, seq_len, num_head, dim_head, attn_param);
     auto *src_mask = ctx.Input<phi::DenseTensor>("SrcMask");
     auto cache_kvs = ctx.MultiInput<phi::DenseTensor>("CacheKV");
+    int cache_bsz = cache_kvs[0]->dims()[1];
     auto cache_kv_outs = ctx.MultiOutput<phi::DenseTensor>("CacheKVOut");
     // auto *time_step = ctx.Input<phi::DenseTensor>("TimeStep");
     auto pre_caches = ctx.MultiInput<phi::DenseTensor>("PreCaches");
@@ -456,6 +457,7 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
                 cache_kv_out,
                 &fmha_out,
                 bsz,
+                cache_bsz,
                 max_seq_len,
                 num_head,
                 dim_head,
@@ -490,7 +492,7 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
         // q_transpose_out_data [bs, head_num, seq_len, dim_head]
         // kv_transpose_out_data [2， bs, head_num, seq_len, dim_head]
         if (rotary_emb_dims != 0) {
-          auto *rotary_emb_data = rotary_tensor->data<T>();
+          auto *rotary_emb_data = rotary_tensor->data<float>();
           const int *sequence_lengths_data =
               encoder_remove_padding ? sequence_lengths->data<int>() : nullptr;
           rotary_qk(dev_ctx,
@@ -564,7 +566,7 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
         // [2, bsz, num_head, max_seq_len, head_dim]
         int max_seq_len = cache_kv_out->dims()[3];
         T *cache_kv_data = cache_kv_out->data<T>();
-        int64_t cache_k_size = bsz * num_head * max_seq_len * dim_head;
+        int64_t cache_k_size = cache_bsz * num_head * max_seq_len * dim_head;
 
         T *cache_k_ptr = cache_kv_data;
         T *cache_v_ptr = cache_kv_data + cache_k_size;
@@ -599,7 +601,7 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
         // q_transpose_out_data [bs, head_num, seq_len, dim_head]
         // kv_transpose_out_data [2， bs, head_num, seq_len, dim_head]
         if (rotary_emb_dims != 0) {
-          auto *rotary_emb_data = rotary_tensor->data<T>();
+          auto *rotary_emb_data = rotary_tensor->data<float>();
           const int *sequence_lengths_data =
               encoder_remove_padding ? sequence_lengths->data<int>() : nullptr;
           rotary_qk(dev_ctx,
