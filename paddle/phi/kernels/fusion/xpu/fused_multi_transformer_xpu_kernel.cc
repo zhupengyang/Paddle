@@ -16,7 +16,8 @@
 #include "paddle/phi/core/kernel_registry.h"
 #include "paddle/phi/kernels/memcpy_kernel.h"
 #ifdef PADDLE_WITH_XPU_XFT
-#include "models/fused_multi_transformer_op.h"
+//#include "models/fused_multi_transformer_op.h"
+#include "models/fused_multi_transformer_gpt.h"
 namespace xft = baidu::xpu::xft;
 #endif
 
@@ -71,10 +72,12 @@ void FusedMultiTransformerXpuKernel(
       seq_lengths.get_ptr(),
       nullptr,
       phi::errors::PreconditionNotMet("seq_lengths not support at now."));
+/*
   PADDLE_ENFORCE_EQ(
       rotary_pos_emb.get_ptr(),
       nullptr,
       phi::errors::PreconditionNotMet("rotary_pos_emb not support at now."));
+*/
   PADDLE_ENFORCE_EQ(
       pre_caches.get_ptr(),
       nullptr,
@@ -115,32 +118,47 @@ void FusedMultiTransformerXpuKernel(
             seq_len));
   }
 
-  XPUTypeT* x_data = reinterpret_cast<XPUTypeT*>(const_cast<T*>(xx.data<T>()));
+  xpu::ctx_guard RAII_GUARD(ctx.x_context());
+  int max_ptr_size = ctx.x_context()->max_ptr_size();
+  int layers = qkvw.size();
+  float* max_buffer = RAII_GUARD.alloc<float>(max_ptr_size * (1 + layers) * 2);
+  float* cache_k_max_buf = const_cast<float*>(max_buffer + max_ptr_size);
+  float* cache_v_max_buf = const_cast<float*>(max_buffer + max_ptr_size * (1 + layers));
+
   XPUTypeT* src_mask_data = reinterpret_cast<XPUTypeT*>(
       const_cast<T*>(src_mask.get_ptr()->data<T>()));
-  auto* out_data = reinterpret_cast<XPUTypeT*>(ctx.template Alloc<T>(out));
   auto src_mask_dims = src_mask.get_ptr()->dims();
   auto out_dims = out->dims();
-  auto xft_x = xft::xftTensor<XPUTypeT, 3>(
-      x_data, std::array<int64_t, 3>{x_dims[0], x_dims[1], x_dims[2]});
+  using float16 = typename XPUTypeTrait<float16>::Type;
+  XPUTypeT* x_data = reinterpret_cast<XPUTypeT*>(const_cast<T*>(xx.data<T>()));
+  float16* tmp_x_data = RAII_GUARD.alloc<float16>(xx.numel());
+  int r = xpu::cast<XPUTypeT, float16>(ctx.x_context(), x_data, tmp_x_data, xx.numel());
+
+  auto xft_x = xft::xftTensor<float16, 3>(
+      tmp_x_data, std::array<int64_t, 3>{x_dims[0], x_dims[1], x_dims[2]});
+
   // TODO(mayang02): xft support mask.dtype = float16
-  xpu::ctx_guard RAII_GUARD(ctx.x_context());
-  float* src_mask_fp32_data =
-      RAII_GUARD.alloc<float>(src_mask.get_ptr()->numel());
-  int r = xpu::cast<XPUTypeT, float>(ctx.x_context(),
+  float16* src_mask_fp16_data =
+      RAII_GUARD.alloc<float16>(src_mask.get_ptr()->numel());
+  r = xpu::cast<XPUTypeT, float16>(ctx.x_context(),
                                      src_mask_data,
-                                     src_mask_fp32_data,
+                                     src_mask_fp16_data,
                                      src_mask.get_ptr()->numel());
   PADDLE_ENFORCE_XDNN_SUCCESS(r, "xpu::cast");
   auto xft_src_mask =
-      xft::xftTensor<float, 4>(src_mask_fp32_data,
+      xft::xftTensor<float16, 4>(src_mask_fp16_data,
                                std::array<int64_t, 4>{src_mask_dims[0],
                                                       src_mask_dims[1],
                                                       src_mask_dims[2],
                                                       src_mask_dims[3]});
-  auto xft_out = xft::xftTensor<XPUTypeT, 3>(
-      out_data, std::array<int64_t, 3>{out_dims[0], out_dims[1], out_dims[2]});
-
+  /*
+  auto xft_src_mask =
+      xft::xftTensor<XPUTypeT, 4>(src_mask_data,
+                               std::array<int64_t, 4>{src_mask_dims[0],
+                                                      src_mask_dims[1],
+                                                      src_mask_dims[2],
+                                                      src_mask_dims[3]});
+                                                      */
   typedef int16_t TW;
   std::vector<xft::xftVec<float>> xft_ln_scale;
   std::vector<xft::xftVec<float>> xft_ln_bias;
@@ -156,8 +174,14 @@ void FusedMultiTransformerXpuKernel(
   std::vector<xft::xftVec<float>> xft_ffn2_bias;
   std::vector<xft::xftTensor<XPUTypeT, 5>> xft_cache_kv;
   std::vector<xft::xftTensor<XPUTypeT, 5>> xft_cache_kv_out;
+  /*
+  std::vector<xft::xftTensor<XPUTypeT, 4>> xft_cache_k;
+  std::vector<xft::xftTensor<XPUTypeT, 4>> xft_cache_v;
+  */
 
-  int layers = qkvw.size();
+  std::vector<xft::xftTensor<float16, 4>> xft_cache_k_fp16;
+  std::vector<xft::xftTensor<float16, 4>> xft_cache_v_fp16;
+
   for (int i = 0; i < layers; ++i) {
     // step1. layer_norm
     xft_ln_scale.emplace_back(const_cast<float*>(ln_scale[i]->data<float>()),
@@ -227,6 +251,22 @@ void FusedMultiTransformerXpuKernel(
                                cachekv_out_dims[2],
                                cachekv_out_dims[3],
                                cachekv_out_dims[4]});
+
+    XPUTypeT* curr_cache_kv_ptr = reinterpret_cast<XPUTypeT*>(ctx.template Alloc<T>(cache_kv_out[i]));
+    int64_t half_len = cache_kv_out[i]->numel() / 2;
+    float* curr_cache_k_max = cache_k_max_buf + i * max_ptr_size;
+    float* curr_cache_v_max = cache_v_max_buf + i * max_ptr_size;
+    /*
+    xft_cache_k.emplace_back(curr_cache_kv_ptr, curr_cache_k_max, std::array<int64_t, 4>{cachekv_out_dims[1],
+        cachekv_out_dims[2], cachekv_out_dims[3], cachekv_out_dims[4]});
+    xft_cache_v.emplace_back(curr_cache_kv_ptr + half_len, curr_cache_v_max, std::array<int64_t, 4>{
+        cachekv_out_dims[1], cachekv_out_dims[2], cachekv_out_dims[3], cachekv_out_dims[4]});
+        */
+
+    xft_cache_k_fp16.emplace_back(reinterpret_cast<float16*>(curr_cache_kv_ptr), curr_cache_k_max, std::array<int64_t, 4>{cachekv_out_dims[1],
+        cachekv_out_dims[2], cachekv_out_dims[3], cachekv_out_dims[4]});
+    xft_cache_v_fp16.emplace_back(reinterpret_cast<float16*>(curr_cache_kv_ptr + half_len), curr_cache_v_max, std::array<int64_t, 4>{
+        cachekv_out_dims[1], cachekv_out_dims[2], cachekv_out_dims[3], cachekv_out_dims[4]});
   }
 
   xft::NlpParam param;
@@ -235,10 +275,48 @@ void FusedMultiTransformerXpuKernel(
   param.size_per_head = dim_head;
   param.hidden_act = act_method;
   param.is_fuse_qkv = true;
-  r = xft::fused_multi_transformer<XPUTypeT, TW, int16_t>(ctx.x_context(),
+
+  const auto rope_dims = rotary_pos_emb.get_ptr()->dims();
+  XPUTypeT* rope_data = reinterpret_cast<XPUTypeT*>(const_cast<T*>(rotary_pos_emb.get_ptr()->data<T>()));
+  float* tmp_data =
+      RAII_GUARD.alloc<float>(rotary_pos_emb.get_ptr()->numel());
+  r = xpu::cast<XPUTypeT, float>(ctx.x_context(),
+                                     rope_data,
+                                     tmp_data,
+                                     rotary_pos_emb.get_ptr()->numel());
+  auto xft_rotary_pos_emb = xft::xftTensor<float, 4>(tmp_data, 
+                                           std::array<int64_t, 4>{rope_dims[0],
+                                           rope_dims[1],
+                                           rope_dims[2],
+                                           rope_dims[3]});
+
+  //std::vector<xft::xftTensor<XPUTypeT, 5>> xft_pre_cache;
+  std::vector<xft::xftTensor<float16, 5>> xft_pre_cache;
+
+  // TODO: need more elegant code
+  const char* layout_env = std::getenv("ATTN_LAYOUT");
+  std::string attn_layout;
+  if (layout_env != nullptr) {
+    attn_layout = std::string(layout_env);
+  } else {
+    attn_layout = "BHLD";
+  }
+
+  auto* out_data = reinterpret_cast<XPUTypeT*>(ctx.template Alloc<T>(out));
+  float16* xft_out_ptr =
+      RAII_GUARD.alloc<float16>(out->numel());
+  r = xpu::cast<XPUTypeT, float16>(ctx.x_context(),
+                                     out_data,
+                                     xft_out_ptr,
+                                     out->numel());
+  auto xft_out = xft::xftTensor<float16, 3>(
+      xft_out_ptr, std::array<int64_t, 3>{out_dims[0], out_dims[1], out_dims[2]});
+
+  r = xft::fused_multi_transformer_gpt<float16, TW, int16_t>(ctx.x_context(),
                                                           xft_x,
-                                                          xft_cache_kv,
+                                                          xft_pre_cache,
                                                           xft_src_mask,
+                                                          xft_rotary_pos_emb,
                                                           xft_ln_scale,
                                                           xft_ln_bias,
                                                           xft_qkvw,
@@ -251,10 +329,17 @@ void FusedMultiTransformerXpuKernel(
                                                           xft_ffn1_bias,
                                                           xft_ffn2_w,
                                                           xft_ffn2_bias,
+                                                          &xft_out,
+                                                          xft_cache_k_fp16,
+                                                          xft_cache_v_fp16,
                                                           param,
                                                           time_step_value,
-                                                          &xft_out,
-                                                          xft_cache_kv_out);
+                                                          nullptr,
+                                                          attn_layout);
+  r = xpu::cast<float16, XPUTypeT>(ctx.x_context(),
+                                     xft_out.data(),
+                                     out_data,
+                                     out->numel());
   PADDLE_ENFORCE_XDNN_SUCCESS(r, "xft::fused_multi_transformer");
 #else
   LOG(FATAL) << "fused_multi_transformer_xpu is not supported since it's not "
@@ -269,7 +354,7 @@ PD_REGISTER_KERNEL(fused_multi_transformer_xpu,
                    XPU,
                    ALL_LAYOUT,
                    phi::fusion::FusedMultiTransformerXpuKernel,
-                   float,
-                   phi::dtype::float16) {
+                   float, phi::dtype::float16
+                   ) {
   kernel->InputAt(20).SetBackend(phi::Backend::CPU);
 }
