@@ -267,11 +267,19 @@ void FusedMultiTransformerDyquantXpuKernel(
   } else {
     attn_layout = "LBHD";
   }
+  const auto rope_dims = rotary_pos_emb.get_ptr()->dims();
+  float* rope_data = const_cast<float*>(rotary_pos_emb.get_ptr()->data<float>());
+  auto xft_rotary_pos_emb = xft::xftTensor<float, 4>(rope_data, 
+                                           std::array<int64_t, 4>{rope_dims[0],
+                                           rope_dims[1],
+                                           rope_dims[2],
+                                           rope_dims[3]});
 
   int r = xft::fused_multi_transformer_gpt<XPUTypeT, TW, int8_t>(ctx.x_context(),
                                                           xft_x,
                                                           xft_pre_cache,
                                                           xft_src_mask,
+                                                          xft_rotary_pos_emb,
                                                           xft_ln_scale,
                                                           xft_ln_bias,
                                                           xft_qkvw,

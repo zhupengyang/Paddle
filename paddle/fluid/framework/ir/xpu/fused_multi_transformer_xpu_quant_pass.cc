@@ -257,9 +257,9 @@ void FusedMultiTransformerXPUQuantPass::ApplyImpl(ir::Graph* graph) const {
 
   int found_subgraph_count = 0;
   for (bool with_time_step : {true, false}) {
-    for (bool with_pre_caches : {true, false}) {
+    for (bool with_pre_caches : {false}) {
       found_subgraph_count +=
-        ApplyImpl(graph, with_pre_caches, false, with_time_step, false, true);
+        ApplyImpl(graph, with_pre_caches, true, with_time_step, false, true);
     }
   }
   AddStatis(found_subgraph_count);
