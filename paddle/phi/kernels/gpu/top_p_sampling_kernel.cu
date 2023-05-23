@@ -529,6 +529,7 @@ template <typename T, typename Context>
 void TopPSamplingKernel(const Context& dev_ctx,
                         const DenseTensor& x,
                         const DenseTensor& ps,
+                        int random_seed,
                         DenseTensor* out,
                         DenseTensor* ids) {
   typedef DataTypeTraits<T> traits_;
@@ -576,8 +577,12 @@ void TopPSamplingKernel(const Context& dev_ctx,
                       bs * sizeof(curandState_t),
                       phi::Stream(reinterpret_cast<phi::StreamId>(dev_ctx.stream())));
   dev_curand_states = reinterpret_cast<curandState_t*>(curand_states_buf->ptr());
-  srand((unsigned int)(time(NULL)));
-  setup_kernel<<<1, 256, 0, cu_stream>>>(dev_curand_states, rand(), bs);
+  if (random_seed == -1) {
+    srand((unsigned int)(time(NULL)));
+    setup_kernel<<<1, 256, 0, cu_stream>>>(dev_curand_states, rand(), bs);
+  } else {
+    setup_kernel<<<1, 256, 0, cu_stream>>>(dev_curand_states, random_seed, bs);
+  }
 
   DenseTensor count_iter;
   count_iter.Resize(phi::make_ddim({bs + 1}));
@@ -617,8 +622,8 @@ void TopPSamplingKernel(const Context& dev_ctx,
 
   cub::DeviceSegmentedRadixSort::SortPairsDescending(nullptr,
                                                      temp_storage_bytes,
-                                                     x.data<T>(),
-                                                     sorted_out.data<T>(),
+                                                     reinterpret_cast<DataType_*>(const_cast<T*>(x.data<T>())),
+                                                     reinterpret_cast<DataType_*>(const_cast<T*>(sorted_out.data<T>())),
                                                      inds_input.data<int64_t>(),
                                                      sorted_id.data<int64_t>(),
                                                      vocab_size * bs,
@@ -638,8 +643,8 @@ void TopPSamplingKernel(const Context& dev_ctx,
   cub::DeviceSegmentedRadixSort::SortPairsDescending(
       temp_storage.data<uint8_t>(),
       temp_storage_bytes,
-      x.data<T>(),
-      sorted_out.data<T>(),
+      reinterpret_cast<DataType_*>(const_cast<T*>(x.data<T>())),
+      reinterpret_cast<DataType_*>(const_cast<T*>(sorted_out.data<T>())),
       inds_input.data<int64_t>(),
       sorted_id.data<int64_t>(),
       vocab_size * bs,
@@ -674,5 +679,9 @@ PD_REGISTER_KERNEL(top_p_sampling,
                    ALL_LAYOUT,
                    phi::TopPSamplingKernel,
                    float,
+#if CUDA_VERSION >= 11060
+                   phi::dtype::float16,
+                   phi::dtype::bfloat16) {}
+#else
                    phi::dtype::float16) {}
-                  //  phi::dtype::bfloat16) {}
+#endif

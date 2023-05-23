@@ -235,6 +235,22 @@ if(WITH_XPU)
     DSTS ${dst_dir} ${dst_dir})
 endif()
 
+if(WITH_FASTDEPLOY_MODEL)
+  set(dst_dir "${PADDLE_INFERENCE_INSTALL_DIR}/third_party/install/fdmodel")
+  copy(
+    inference_lib_dist
+    SRCS ${FASTDEPLOY_WENXIN_LIB} ${FASTDEPLOY_MODEL_LIB}
+    DSTS ${dst_dir}/lib ${dst_dir}/lib)
+endif()
+
+if(WITH_FASTDEPLOY_AUTH)
+  set(dst_dir "${PADDLE_INFERENCE_INSTALL_DIR}/third_party/install/fdmodel")
+  copy(
+    inference_lib_dist
+    SRCS ${FASTDEPLOY_AUTH_LIB}
+    DSTS ${dst_dir}/lib)
+endif()
+
 # CMakeCache Info
 copy(
   inference_lib_dist

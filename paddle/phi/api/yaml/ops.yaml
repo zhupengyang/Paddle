@@ -2339,7 +2339,7 @@
   backward : where_grad
 
 - op : top_p_sampling
-  args : (Tensor x, Tensor ps)
+  args : (Tensor x, Tensor ps, int random_seed=-1)
   output : Tensor (out), Tensor(ids)
   infer_meta :
     func : TopPSamplingInferMeta
@@ -2386,3 +2386,12 @@
   optional : gt_score
   intermediate : objectness_mask, gt_match_mask
   backward : yolo_loss_grad
+
+- op : rms_norm
+  args : (Tensor x, Tensor weight, float epsilon, int begin_norm_axis)
+  output : Tensor(out)
+  infer_meta :
+    func : RmsNormInferMeta
+  kernel :
+    func : rms_norm
+    data_type : x

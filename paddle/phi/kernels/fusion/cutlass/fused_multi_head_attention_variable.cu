@@ -229,11 +229,11 @@ void LaunchMultiHeadAttentionKernel(Params params,
   ctx.template Alloc<uint8_t>(&workspace);
   status = fmha.initialize(args, workspace.data<uint8_t>());
   if (status != cutlass::Status::kSuccess) {
-    std::cerr << "Failed to initialize CUTLASS Grouped FMHA kernel." << std::endl;
+    PADDLE_THROW(phi::errors::Unimplemented("Failed to initialize CUTLASS Grouped FMHA kernel."));
   }
   status = fmha.run();
   if (status != cutlass::Status::kSuccess) {
-    std::cerr << "Failed to run CUTLASS Grouped FMHA kernel." << std::endl;
+    PADDLE_THROW(phi::errors::Unimplemented("Failed to run CUTLASS Grouped FMHA kernel."));
   }
 }
 
@@ -484,7 +484,13 @@ void MultiHeadAttentionVariableWrapper(const Context& ctx,
   params.key_value_seq_len = out_seq_len;
   params.value_head_size = value_head_size;
 
-  params.datatype = DataType::FLOAT16;
+  if (std::is_same<T, phi::dtype::float16>::value) {
+    params.datatype = DataType::FLOAT16;
+  } else if (std::is_same<T, phi::dtype::bfloat16>::value) {
+    params.datatype = DataType::BFLOAT16;
+  } else {
+    params.datatype = DataType::FLOAT32;
+  }
   params.query_ptr = query;
   params.key_ptr = key;
   params.value_ptr = value;

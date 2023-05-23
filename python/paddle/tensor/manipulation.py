@@ -2209,6 +2209,7 @@ def squeeze(x, axis=None, name=None):
             input,
             'input',
             [
+                'uint16',
                 'float16',
                 'uint16',
                 'float32',

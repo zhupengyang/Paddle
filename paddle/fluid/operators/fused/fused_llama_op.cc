@@ -21,9 +21,9 @@ limitations under the License. */
 namespace paddle {
 namespace operators {
 
-class FusedMultiTransformerOp : public framework::OperatorWithKernel {
+class FusedLLAMAOp : public framework::OperatorWithKernel {
  private:
-  static constexpr const char *OpName = "FusedMultiTransformerOp";
+  static constexpr const char *OpName = "FusedLLAMAOp";
 
  public:
   using framework::OperatorWithKernel::OperatorWithKernel;
@@ -147,7 +147,7 @@ class FusedMultiTransformerOp : public framework::OperatorWithKernel {
   }
 };
 
-class FusedMultiTransformerOpOpMaker
+class FusedLLAMAOpOpMaker
     : public framework::OpProtoAndCheckerMaker {
  public:
   void Make() override {
@@ -156,12 +156,9 @@ class FusedMultiTransformerOpOpMaker
              "Scale is a 1-dimensional tensor of size "
              "H. Here, H represents the last dimension of its input tensor.")
         .AsDuplicable();
-    AddInput("LnBias",
-             "Bias is a 1-dimensional tensor of size "
-             "H. Here, H represents the last dimension of its input tensor.")
-        .AsDuplicable();
+    
     AddInput("QKVW", "The qkv weight tensor.").AsDuplicable();
-    AddInput("QKVBias", "The qkv bias tensor.").AsDispensable().AsDuplicable();
+
     AddInput("CacheKV", "(optional) The cached KV for generation inference.")
         .AsDispensable()
         .AsDuplicable();
@@ -180,32 +177,34 @@ class FusedMultiTransformerOpOpMaker
     AddInput("SrcMask", "(optional) The attention mask tensor in fmha.")
         .AsDispensable();
     AddInput("OutLinearW", "The out_linear weight tensor.").AsDuplicable();
-    AddInput("OutLinearBias", "The out_linear bias tensor.")
-        .AsDispensable()
-        .AsDuplicable();
     AddInput("FFNLnScale", "The layer_norm scale of FusedFeedForward op")
-        .AsDuplicable();
-    AddInput("FFNLnBias", "The layer_norm bias of FusedFeedForward op")
-        .AsDuplicable();
-    AddInput("FFN1Weight", "The linear1 weight of FusedFeedForward op")
-        .AsDuplicable();
-    AddInput("FFN1Bias", "The linear1 bias of FusedFeedForward op")
         .AsDispensable()
+        .AsDuplicable();
+    // Because LLAMA use GLU. 
+    AddInput("FFN1Weight", "The linear1 weight of FusedFeedForward op")
         .AsDuplicable();
     AddInput("FFN2Weight", "The linear2 weight of FusedFeedForward op")
         .AsDuplicable();
-    AddInput("FFN2Bias", "The linear2 bias input of FusedFeedForward op")
+
+    // Weightonly Scale 
+    AddInput("QKVWScale", "QKVWScale")        
         .AsDispensable()
         .AsDuplicable();
+    AddInput("OutLinearWScale", "OutLinearWScale")        
+        .AsDispensable()
+        .AsDuplicable();
+    AddInput("FFN1WeightScale", "FFN1WeightScale")        
+        .AsDispensable()
+        .AsDuplicable();
+    AddInput("FFN2WeightScale", "FFN2WeightScale")        
+        .AsDispensable()
+        .AsDuplicable();
+
     AddOutput("CacheKVOut", "The updated cache KV. Inplace with CacheKV")
         .AsDispensable()
         .AsDuplicable();
     AddOutput("Out", "Result after multi .");
-    AddAttr<bool>("pre_layer_norm",
-                  "if true, the attention op uses pre_layer_norm architecure, "
-                  "else, uses post_layer_norm architecuture. "
-                  "[default true].")
-        .SetDefault(true);
+    
     AddAttr<int>("rotary_emb_dims",
                  "the Attr(dims) for RotaryPosEmb's Computation  [default 0].")
         .SetDefault(0)
@@ -230,41 +229,15 @@ class FusedMultiTransformerOpOpMaker
                                 epsilon));
         });
 
-    AddAttr<float>("dropout_rate", "Probability of setting units to zero.")
-        .SetDefault(.5f)
-        .AddCustomChecker([](const float &drop_p) {
-          PADDLE_ENFORCE_EQ(drop_p >= 0.0f && drop_p <= 1.0f,
-                            true,
-                            platform::errors::InvalidArgument(
-                                "'dropout_rate' must be between 0.0 and 1.0."));
-        });
-
-    AddAttr<bool>("is_test",
-                  "(bool, default false) Set to true for inference only, false "
-                  "for training. Some layers may run faster when this is true.")
-        .SetDefault(false);
-    AddAttr<std::string>(
-        "dropout_implementation",
-        "[\"downgrade_in_infer\"|\"upscale_in_train\"]"
-        "The meaning is the same as 'attn_dropout_implementation'.")
-        .SetDefault("downgrade_in_infer")
-        .AddCustomChecker([](const std::string &type) {
-          PADDLE_ENFORCE_EQ(
-              type == "downgrade_in_infer" || type == "upscale_in_train",
-              true,
-              platform::errors::InvalidArgument(
-                  "dropout_implementation can only be downgrade_in_infer or "
-                  "upscale_in_train"));
-        });
     AddAttr<std::string>("act_method", "act_method")
-        .SetDefault("gelu")
+        .SetDefault("swiglu")
         .AddCustomChecker([](const std::string &act_type) {
           PADDLE_ENFORCE_EQ(
-              act_type == "gelu" || act_type == "geglu" || act_type == "swiglu" || act_type == "relu" || act_type == "none",
+              act_type == "swiglu",
               true,
               platform::errors::InvalidArgument(
-                  "Only support `gelu`, `geglu`, `swiglu`, `relu`, `none` activation in "
-                  "FusedMultiTransformer. "));
+                  "Only support `swiglu` in "
+                  "FusedLLAMA. "));
         });
 
     AddAttr<bool>(
@@ -275,12 +248,15 @@ class FusedMultiTransformerOpOpMaker
         "[dim_embed, 3, num_head, dim_head]")
         .SetDefault(true);
 
+    AddAttr<bool>("quant_weight","Whether do weight quant")
+        .SetDefault(false);
+
     AddAttr<int>(
         "ring_id",
         "ring id for tensor model parallel. distributed training and inference")
         .SetDefault(-1);
     
-    AddComment(R"DOC(fused multi transformer layers op)DOC");
+    AddComment(R"DOC(fused llama model op)DOC");
   }
 };
 
@@ -289,13 +265,13 @@ class FusedMultiTransformerOpOpMaker
 
 namespace ops = paddle::operators;
 REGISTER_OPERATOR(
-    fused_multi_transformer,
-    ops::FusedMultiTransformerOp,
-    ops::FusedMultiTransformerOpOpMaker,
+    fused_llama,
+    ops::FusedLLAMAOp,
+    ops::FusedLLAMAOpOpMaker,
     paddle::framework::EmptyGradOpMaker<paddle::framework::OpDesc>,
     paddle::framework::EmptyGradOpMaker<paddle::imperative::OpBase>);
 
-REGISTER_OP_VERSION(fused_multi_transformer)
+REGISTER_OP_VERSION(fused_llama)
     .AddCheckpoint(
         R"ROC(
               Add a new attribute [trans_qkvw] )ROC",

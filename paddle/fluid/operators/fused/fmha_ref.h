@@ -28,10 +28,10 @@ limitations under the License. */
 #include "paddle/phi/kernels/fusion/fused_softmax_mask_kernel.h"
 #include "paddle/phi/kernels/fusion/fused_multihead_attention_kernel.h"
 #include "paddle/phi/kernels/fusion/fused_multihead_attention_variable_kernel.h"
+// #include "paddle/fluid/operators/fused/fused_multi_transformer_op.cu.h"
 
 namespace paddle {
 namespace operators {
-
 template <paddle::DataType D>
 class PDTraits;
 
@@ -185,7 +185,8 @@ class FMHARef {
                       phi::DenseTensor* dropout_mask_out_tensor,
                       phi::DenseTensor* dropout_out_tensor,
                       phi::DenseTensor* qktv_out_tensor,
-                      phi::DenseTensor* fmha_out_tensor) {
+                      phi::DenseTensor* fmha_out_tensor,
+                      const bool mask_broadcast_num_heads = true) {
     // input shape: [bs, seq_len, 3, num_head, head_dim]
     // transpose with perm [2, 0, 3, 1, 4],
     // output_shape: [3, bs, num_head, seq_len, head_dim]
@@ -268,6 +269,7 @@ class FMHARef {
                                         batch_size_,
                                         num_head_,
                                         seq_len_,
+                                        mask_broadcast_num_heads,
                                         dev_ctx_.stream());
       } else {
         std::vector<const phi::DenseTensor*> ins;
@@ -469,7 +471,8 @@ class FMHARef {
       phi::DenseTensor* dropout_out_tensor,
       phi::DenseTensor* qktv_out_tensor,
       phi::DenseTensor* fmha_out_tensor,
-      const int token_num) {
+      const int token_num,
+      const bool mask_broadcast_num_heads = true) {
     // input shape: [bs, seq_len, 3, num_head, head_dim]
     // transpose with perm [2, 0, 3, 1, 4],
     // output_shape: [3, bs, num_head, seq_len, head_dim]
@@ -549,6 +552,7 @@ class FMHARef {
                                         batch_size_,
                                         num_head_,
                                         seq_len_,
+                                        mask_broadcast_num_heads,
                                         dev_ctx_.stream());
         // phi::fusion::FusedSoftmaxMaskKernel<T, phi::GPUContext>(dev_ctx_, *qk_out_tensor, *src_mask_tensor, softmax_out_tensor);
       } else {

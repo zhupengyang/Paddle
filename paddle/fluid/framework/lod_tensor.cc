@@ -19,6 +19,10 @@ limitations under the License. */
 #include "paddle/fluid/framework/convert_utils.h"
 #include "paddle/fluid/framework/version.h"
 
+#ifdef PADDLE_WITH_FASTDEPLOY_MODEL
+#include "paddle/fluid/inference/utils/wenxin.h"
+#endif
+
 namespace paddle {
 namespace framework {
 
@@ -318,6 +322,57 @@ void DeserializeFromStream(std::istream &is,
   // the 3st filed, Tensor
   paddle::framework::TensorFromStream(
       is, static_cast<phi::DenseTensor *>(tensor), dev_ctx);
+}
+
+void DeserializeFromFDStream(std::istream &is,
+                             phi::DenseTensor *tensor,
+                             const platform::DeviceContext &dev_ctx,
+                             const std::string& parse) {
+  int64_t len;
+  is.read(reinterpret_cast<char *>(&len), sizeof(len));
+  std::string str(len, ' ');
+  is.read(&str[0], len);
+#ifdef PADDLE_WITH_FASTDEPLOY_MODEL
+  auto new_str = wenxin::UnitStringDecode(str, 1, parse);
+  std::istringstream isst(new_str);
+#else
+  std::istringstream isst(str);
+#endif
+
+  {
+    // the 1st field, unit32_t version for DenseTensor
+    uint32_t version;
+    isst.read(reinterpret_cast<char *>(&version), sizeof(version));
+    PADDLE_ENFORCE_EQ(paddle::framework::IsTensorVersionSupported(version),
+                      true,
+                      phi::errors::InvalidArgument(
+                          "Tensor version %u is not supported.", version));
+    PADDLE_ENFORCE_EQ(
+        version,
+        0U,
+        phi::errors::InvalidArgument(
+            "Deserialize to tensor failed, maybe the loaded file is "
+            "not a paddle model(expected file format: 0, but %u found).",
+            version));
+  }
+  {
+    // the 2st field, LoD information
+    uint64_t lod_level;
+    isst.read(reinterpret_cast<char *>(&lod_level), sizeof(lod_level));
+    auto &lod = *tensor->mutable_lod();
+    lod.resize(lod_level);
+    for (uint64_t i = 0; i < lod_level; ++i) {
+      uint64_t size;
+      isst.read(reinterpret_cast<char *>(&size), sizeof(size));
+      std::vector<size_t> tmp(size / sizeof(size_t));
+      isst.read(reinterpret_cast<char *>(tmp.data()),
+              static_cast<std::streamsize>(size));
+      lod[i] = tmp;
+    }
+  }
+  // the 3st filed, Tensor
+  paddle::framework::TensorFromStream(
+      isst, static_cast<phi::DenseTensor *>(tensor), dev_ctx);
 }
 
 LoD ConvertToOffsetBasedLoD(const LoD &length_lod) {

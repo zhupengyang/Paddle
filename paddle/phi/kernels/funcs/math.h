@@ -25,6 +25,10 @@ inline HOSTDEVICE phi::dtype::float16 real_exp(phi::dtype::float16 x) {
   return static_cast<phi::dtype::float16>(::expf(static_cast<float>(x)));
 }
 
+inline HOSTDEVICE phi::dtype::bfloat16 real_exp(phi::dtype::bfloat16 x) {
+  return static_cast<phi::dtype::bfloat16>(::expf(static_cast<float>(x)));
+}
+
 inline HOSTDEVICE float real_exp(float x) { return ::expf(x); }
 
 inline HOSTDEVICE double real_exp(double x) { return ::exp(x); }

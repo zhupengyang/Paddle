@@ -618,6 +618,12 @@ class AnalysisPredictor : public PaddlePredictor {
   std::shared_ptr<distributed::TaskNode> task_node_;
 #endif
   friend class paddle_infer::experimental::InternalUtils;
+
+#ifdef PADDLE_WITH_FASTDEPLOY_AUTH
+  std::string auth_product_name_;
+  int auth_period_;
+  int run_count_for_auth_ = 0;
+#endif
 };
 
 }  // namespace paddle

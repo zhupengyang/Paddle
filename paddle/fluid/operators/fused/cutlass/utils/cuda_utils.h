@@ -28,7 +28,8 @@
 #include <cusparseLt.h>
 #endif
 
-namespace fastertransformer {
+namespace paddle {
+namespace operators{
 
 #define MAX_CONFIG_NUM 20
 #define COL32_ 32
@@ -134,7 +135,7 @@ inline void syncAndCheck(const char* const file, int const line)
                 throw std::runtime_error(std::string("[FT][ERROR] CUDA runtime error: ") + (_cudaGetErrorEnum(result))
                                          + " " + file + ":" + std::to_string(line) + " \n");
             }
-            VLOG(3)<<"run syncAndCheck at "<<file<<":"<<line;
+            std::cout<<"run syncAndCheck at "<<file<<":"<<line<<std::endl;
         }
     }
 
@@ -209,7 +210,7 @@ inline void myAssert(bool result, const char* const file, int const line, std::s
     do {                                                                                                               \
         bool is_valid_val = (val);                                                                                     \
         if (!is_valid_val) {                                                                                           \
-            fastertransformer::myAssert(is_valid_val, __FILE__, __LINE__, (info));                                     \
+            paddle::operators::myAssert(is_valid_val, __FILE__, __LINE__, (info));                                     \
         }                                                                                                              \
     } while (0)
 
@@ -409,18 +410,18 @@ void compareTwoTensor(
     }
 
     if (print_size > 0) {
-        VLOG(1)<<"  id |   pred  |   ref   |abs diff | rel diff (%) |";
+        std::cout<<"  id |   pred  |   ref   |abs diff | rel diff (%) |"<<std::endl;
     }
     float mean_abs_diff = 0.0f;
     float mean_rel_diff = 0.0f;
     int   count         = 0;
     for (int i = 0; i < size; i++) {
         if (i < print_size) {
-            VLOG(1)<<i<<" | "
+            std::cout<<i<<" | "
                    <<(float)h_pred[i]<<" | "
                    <<(float)h_ref[i]<<" | "
                    <<(abs((float)h_pred[i] - (float)h_ref[i]))<<" | "
-                   <<(abs((float)h_pred[i] - (float)h_ref[i]) / (abs((float)h_ref[i]) + 1e-6f) * 100.f)<<" | ";
+                   <<(abs((float)h_pred[i] - (float)h_ref[i]) / (abs((float)h_ref[i]) + 1e-6f) * 100.f)<<" | "<<std::endl;
         }
         if ((float)h_pred[i] == 0) {
             continue;
@@ -440,7 +441,7 @@ void compareTwoTensor(
     }
     mean_abs_diff = mean_abs_diff / (float)count;
     mean_rel_diff = mean_rel_diff / (float)count;
-    VLOG(1)<<"mean_abs_diff: "<<mean_abs_diff<<", mean_rel_diff: "<<mean_rel_diff;
+    std::cout<<"mean_abs_diff: "<<mean_abs_diff<<", mean_rel_diff: "<<mean_rel_diff<<std::endl;
 
     if (fd != nullptr) {
         fprintf(fd, "mean_abs_diff: % 6.4f, mean_rel_diff: % 6.4f (%%)", mean_abs_diff, mean_rel_diff);
@@ -451,4 +452,5 @@ void compareTwoTensor(
 }
 
 /* ************************** end of common utils ************************** */
-}  // namespace fastertransformer
+}  // namespace operators
+}  // namespace paddle

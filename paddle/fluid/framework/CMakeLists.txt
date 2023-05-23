@@ -163,10 +163,15 @@ cc_test(
   SRCS eigen_test.cc
   DEPS tensor)
 
+set(lod_tensor_deps ddim mixed_vector place tensor framework_proto version)
+if(WITH_FASTDEPLOY_MODEL)
+  set(lod_tensor_deps ${lod_tensor_deps} ${FASTDEPLOY_WENXIN_LIB})
+endif()
+
 cc_library(
   lod_tensor
   SRCS lod_tensor.cc
-  DEPS ddim mixed_vector place tensor framework_proto version)
+  DEPS ${lod_tensor_deps})
 
 cc_test(
   lod_tensor_test

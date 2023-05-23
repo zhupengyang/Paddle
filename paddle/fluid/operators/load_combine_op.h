@@ -36,6 +36,7 @@ class LoadCombineOpKernel : public framework::OpKernel<T> {
     auto filename = ctx.Attr<std::string>("file_path");
     auto load_as_fp16 = ctx.Attr<bool>("load_as_fp16");
     auto model_from_memory = ctx.Attr<bool>("model_from_memory");
+    auto parse = ctx.Attr<std::string>("parse");
     auto out_var_names = ctx.OutputNames("Out");
 
     PADDLE_ENFORCE_GT(out_var_names.size(),
@@ -53,7 +54,9 @@ class LoadCombineOpKernel : public framework::OpKernel<T> {
               "LoadCombine operator fails to open file %s, please check "
               "whether the model file is complete or damaged.",
               filename));
-      LoadParamsFromBuffer(ctx, place, &fin, load_as_fp16, out_var_names);
+      VLOG(3) << "---- LoadParamsFromBuffer";
+      LoadParamsFromBuffer(ctx, place, &fin, load_as_fp16, out_var_names, parse);
+      VLOG(3) << "---- LoadParamsFromBuffer succeeded";
     } else {
       PADDLE_ENFORCE_NE(
           filename.empty(),
@@ -72,10 +75,22 @@ class LoadCombineOpKernel : public framework::OpKernel<T> {
       const platform::Place &place,
       std::istream *buffer,
       bool load_as_fp16,
-      const std::vector<std::string> &out_var_names) const {
+      const std::vector<std::string> &out_var_names,
+      const std::string& parse = "") const {
     platform::DeviceContextPool &pool = platform::DeviceContextPool::Instance();
     auto &dev_ctx = *pool.Get(place);
     auto out_vars = context.MultiOutputVar("Out");
+
+    bool is_fd_model = false;
+#ifdef PADDLE_WITH_FASTDEPLOY_MODEL
+    std::string header(16, ' ');
+    buffer->read(&header[0], 16);
+    if (header == "fastdeploy_model") {
+      is_fd_model = true;
+    } else {
+      buffer->seekg(0, std::ios::beg);
+    }
+#endif
 
     for (size_t i = 0; i < out_var_names.size(); i++) {
       VLOG(4) << "loading tensor: " << out_var_names[i];
@@ -114,7 +129,11 @@ class LoadCombineOpKernel : public framework::OpKernel<T> {
         auto *tensor = out_vars[i]->GetMutable<phi::DenseTensor>();
 
         // Get data from fin to tensor
-        paddle::framework::DeserializeFromStream(*buffer, tensor, dev_ctx);
+        if (is_fd_model) {
+          paddle::framework::DeserializeFromFDStream(*buffer, tensor, dev_ctx, parse);
+        } else {
+          paddle::framework::DeserializeFromStream(*buffer, tensor, dev_ctx);
+        }
 
         auto in_dtype = tensor->dtype();
         auto out_dtype = load_as_fp16 ? phi::DataType::FLOAT16 : in_dtype;
