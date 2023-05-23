@@ -27,11 +27,57 @@ limitations under the License. */
 namespace paddle {
 namespace operators {
 
+namespace {
 constexpr int32_t WARP_SIZE = 32; 
 constexpr int32_t HALF_WARP = 16; 
 constexpr float QUANT_MAX_BOUND = 127.0;
 constexpr float QUANT_MIN_BOUND = -127.0;
-// constexpr int KFP=128;
+constexpr int32_t kBlockSize = 256; 
+constexpr int32_t kNumWaves = 16; 
+
+inline cudaError_t GetGridSize(int64_t n, int* num_blocks) {
+  int dev;
+  {
+    cudaError_t err = cudaGetDevice(&dev);
+    if (err != cudaSuccess) { return err; }
+  }
+  int sm_count;
+  {
+    cudaError_t err = cudaDeviceGetAttribute(&sm_count, cudaDevAttrMultiProcessorCount, dev);
+    if (err != cudaSuccess) { return err; }
+  }
+  int tpm;
+  {
+    cudaError_t err = cudaDeviceGetAttribute(&tpm, cudaDevAttrMaxThreadsPerMultiProcessor, dev);
+    if (err != cudaSuccess) { return err; }
+  }
+  *num_blocks = std::max<int>(1, std::min<int64_t>((n + kBlockSize - 1) / kBlockSize,
+                                                   sm_count * tpm / kBlockSize * kNumWaves));
+  return cudaSuccess;
+}
+
+template<class Func>
+inline cudaError_t GetMaxOccupancyBlocks(Func func, int64_t block_size, size_t dynamic_smem_size,
+                                         int64_t max_blocks, int* num_blocks) {
+  int dev;
+  {
+    cudaError_t err = cudaGetDevice(&dev);
+    if (err != cudaSuccess) { return err; }
+  }
+  int sm_count;
+  {
+    cudaError_t err = cudaDeviceGetAttribute(&sm_count, cudaDevAttrMultiProcessorCount, dev);
+    if (err != cudaSuccess) { return err; }
+  }
+  int max_active_blocks;
+  {
+    cudaError_t err = cudaOccupancyMaxActiveBlocksPerMultiprocessor(&max_active_blocks, func,
+                                                                    block_size, dynamic_smem_size);
+  }
+  *num_blocks =
+      std::max<int>(1, std::min<int64_t>(max_blocks, sm_count * max_active_blocks * kNumWaves));
+  return cudaSuccess;
+}
 
 template<typename T>
 struct MaxFunc{
@@ -51,6 +97,16 @@ struct MaxFunc<half>{
   }
 }; 
 
+template<>
+struct MaxFunc<__nv_bfloat16>{
+  __device__ __nv_bfloat16 operator()(__nv_bfloat16 a, __nv_bfloat16 b){
+#if __CUDA_ARCH__ >= 800
+    return __hmax(a, b); 
+#else
+    return max(static_cast<float>(a), static_cast<float>(b));
+#endif
+  }
+}; 
 
 template<typename T>
 struct AbsFunc{
@@ -62,6 +118,17 @@ struct AbsFunc{
 template<>
 struct AbsFunc<half>{
   __device__ half operator()(half x){
+  #if __CUDA_ARCH__ >= 800
+    return __habs(x); 
+  #else
+    return abs(static_cast<float>(x));
+  #endif
+  }
+}; 
+
+template<>
+struct AbsFunc<__nv_bfloat16>{
+  __device__ __nv_bfloat16 operator()(__nv_bfloat16 x){
   #if __CUDA_ARCH__ >= 800
     return __habs(x); 
   #else
@@ -85,10 +152,10 @@ struct QuantFunc{
 
 template<typename T>
 struct DequantFunc{
-  HOSTDEVICE T operator()(int8_t x, T scale) {
+  HOSTDEVICE T operator()(int8_t x, float scale) {
     return static_cast<T>(static_cast<float>(x) * static_cast<float>(scale));
   }
-  HOSTDEVICE T operator()(int32_t x, T input_range, T weight_scale) {
+  HOSTDEVICE T operator()(int32_t x, float input_range, float weight_scale) {
     return static_cast<T>(static_cast<float>(x) * static_cast<float>(input_range) * static_cast<float>(weight_scale) / (127.0f));
   }
 };
@@ -127,20 +194,21 @@ __inline__ __device__ T BlockReduceAbsMax(T val, unsigned mask) {
   return abs_max_val; 
 }
 
-template<typename T, int VecSize>
+
+template<typename T, typename ComputeType, int VecSize>
 __global__ void ReduceAbsMaxKernel(const T* x, const float threshold, const int32_t rows, const int32_t cols, 
-                                   T* row_ranges, int32_t* outlier_idx){
+                                   float* row_ranges, int32_t* outlier_idx){
   using InVec = phi::AlignedVector<T, VecSize>;
+  using ComputeVec = phi::AlignedVector<ComputeType, VecSize>;
 
   InVec in_vec;
-  InVec abs_max_vec;
+  ComputeVec abs_max_vec;
   #pragma unroll
   for (int i = 0; i < VecSize; ++i) {
-    abs_max_vec[i] = 0.0;
+    abs_max_vec[i] = 0.0f;
   }
 
-
-  T local_max_val = static_cast<T>(0.0); 
+  ComputeType local_max_val = static_cast<ComputeType>(0.0f); 
   for(int row_idx = blockIdx.x; row_idx < rows; row_idx += gridDim.x){
       for(int col_idx = threadIdx.x * VecSize; col_idx < cols; col_idx += blockDim.x * VecSize){
           int32_t linear_index = row_idx * cols + col_idx; 
@@ -152,66 +220,47 @@ __global__ void ReduceAbsMaxKernel(const T* x, const float threshold, const int3
               int32_t index = col_idx + i;
               int32_t int_index = index / 32;
               int32_t inner_index = index % 32;
-              // outlier_idx[int_index] |= (1 << inner_index);
               atomicOr(outlier_idx + int_index, (1 << inner_index));
               in_vec[i] = 0.0;
             }
-            abs_max_vec[i] = MaxFunc<T>()(abs_max_vec[i], in_vec[i]);
+            abs_max_vec[i] = MaxFunc<ComputeType>()(abs_max_vec[i], static_cast<ComputeType>(in_vec[i]));
           }
       }
-      local_max_val = LocalReduceMax<T, InVec, VecSize>(abs_max_vec); 
-      // __shared__ float inverse_row_max_val[1]; 
-      T tmp_max_val = BlockReduceAbsMax<T>(local_max_val, 0xffffffff); 
+      local_max_val = LocalReduceMax<ComputeType, ComputeVec, VecSize>(abs_max_vec); 
+      ComputeType tmp_max_val = BlockReduceAbsMax<ComputeType>(local_max_val, 0xffffffff); 
       if(threadIdx.x == 0){
         row_ranges[row_idx] = tmp_max_val; 
-        // inverse_row_max_val[0] = (1.0f / static_cast<float>(tmp_max_val));
       }
-      // __syncthreads();
-
-      // for(int col_idx = threadIdx.x * VecSize; col_idx < cols; col_idx += blockDim.x * VecSize){
-      //     int32_t linear_index = row_idx * cols + col_idx; 
-      //     phi::Load<T, VecSize>(x + linear_index, &in_vec);
-
-      //   #pragma unroll
-      //     for (int i = 0; i < VecSize; ++i) {
-      //       if (in_vec[i] < static_cast<T>(threshold)) {
-      //         out_vec[i] = QuantFunc<T>()(in_vec[i], inverse_row_max_val[0]);
-      //       } else {
-      //         out_vec[i] = 0;
-      //       }
-            
-      //     }
-      //     phi::Store(out_vec, quant_x + linear_index);
-      // }
   }
 }
 
+
 template<typename T, int VecSize>
-__global__ void QuantActKernel(const T* x, const int32_t rows, const int32_t cols, 
-                                   const T* row_ranges, const int32_t* outlier_idx, int8_t* quant_x) {
+__global__ void QuantActKernel(const T* x, const int32_t elem_cnt, const int32_t cols, 
+                               const float* row_ranges, const int32_t* outlier_idx, int8_t* quant_x) {
   
   using InVec = phi::AlignedVector<T, VecSize>;
   using OutVec = phi::AlignedVector<int8_t, VecSize>;
 
   InVec in_vec;
   OutVec out_vec;
-  for(int row_idx = blockIdx.x; row_idx < rows; row_idx += gridDim.x){
-      for(int col_idx = threadIdx.x * VecSize; col_idx < cols; col_idx += blockDim.x * VecSize){
-        int32_t linear_index = row_idx * cols + col_idx; 
-        phi::Load<T, VecSize>(x + linear_index, &in_vec);
-        #pragma unroll
-        float scale = 1.0f / static_cast<float>(row_ranges[row_idx]);
-        int32_t local_outlier_idx = outlier_idx[col_idx / 32];
-        for (int i = 0; i < VecSize; ++i) {
-          int32_t index = linear_index + i;
-          if (local_outlier_idx & (1 << (index % 32))) {
-            out_vec[i] = 0;
-          } else {
-            out_vec[i] = QuantFunc<T>()(in_vec[i], scale);
-          }
-        }
-        phi::Store(out_vec, quant_x + linear_index);
+
+  for(int linear_index = (blockIdx.x * blockDim.x + threadIdx.x) * VecSize; linear_index < elem_cnt; linear_index += gridDim.x * blockDim.x * VecSize){ 
+    int row_idx = linear_index / cols; 
+    int col_idx = linear_index - row_idx * cols; // equal to linear_index % cols
+    phi::Load<T, VecSize>(x + linear_index, &in_vec);
+    int32_t local_outlier_idx = outlier_idx[col_idx / 32];
+    float scale = 1.0f / row_ranges[row_idx]; 
+    #pragma unroll
+    for (int i = 0; i < VecSize; ++i) {
+      int32_t index = linear_index + i;
+      if (local_outlier_idx & (1 << (index % 32))) {
+        out_vec[i] = 0;
+      } else {
+        out_vec[i] = QuantFunc<T>()(in_vec[i], scale);
       }
+    }
+    phi::Store(out_vec, quant_x + linear_index);
   }
 }
 
@@ -234,7 +283,7 @@ __global__ void Fill(T* input, T value, int64_t num) {
 
 
 template<typename T>
-__global__ void SplitKernel(const T* x, const int8_t* weight, const T* weight_scale, const int32_t* outlier_idx, 
+__global__ void SplitKernel(const T* x, const int8_t* weight, const float* weight_scale, const int32_t* outlier_idx, 
                        T* sub_x, T* sub_weight, 
                             int m, int k, int n, int num_outlier_idx, int kfp_num, 
                             int sub_x_elem_cnt, int sub_w_elem_cnt, int elem_cnt) {
@@ -261,15 +310,24 @@ __global__ void SplitKernel(const T* x, const int8_t* weight, const T* weight_sc
   __syncthreads();
   
   for(int linear_idx=blockIdx.x * blockDim.x + threadIdx.x; linear_idx < elem_cnt; linear_idx+=blockDim.x * gridDim.x){
-    int32_t row_idx = linear_idx / kfp_num; 
-    int32_t col_idx = linear_idx % kfp_num;
+    int32_t row_idx = linear_idx / kfp_num; // n
+    int32_t col_idx = linear_idx % kfp_num; // k
     int32_t k_id = k_ids_shm[col_idx];
     if (k_id == -1) continue;
     if(linear_idx < sub_x_elem_cnt){
-        sub_x[row_idx * kfp_num + col_idx] = x[row_idx * k + k_id];
+      sub_x[row_idx * kfp_num + col_idx] = x[row_idx * k + k_id];
     } 
+    
+
     if(linear_idx < sub_w_elem_cnt){
-        sub_weight[row_idx * kfp_num + col_idx] = DequantFunc<T>()(weight[row_idx * k + k_id], weight_scale[row_idx]);
+      constexpr int32_t k_permute_const = 8;
+      int32_t k_mod_16 = k_id%16;
+      int32_t temp_k_expr_1 = k_mod_16 - k_mod_16 / 8 * 8;
+      int32_t temp_k_expr_2 = k_mod_16 / 8;
+      int32_t permute_kk = temp_k_expr_1+temp_k_expr_2+(temp_k_expr_2+1)%2*k_mod_16*2/2+temp_k_expr_1*temp_k_expr_2 + k_id / 16 * 16;
+      int32_t permute_index = permute_kk % 64 + permute_kk/64*128 + 64*(row_idx%2)+k*2*(row_idx/2); // TODO
+      int8_t shifted_weight = static_cast<int8_t>(static_cast<int32_t>(weight[permute_index]) - 128);
+      sub_weight[row_idx * kfp_num + col_idx] = DequantFunc<T>()(shifted_weight, weight_scale[row_idx]);
     }
   }
 }
@@ -288,11 +346,33 @@ __global__ void UpdateOutlier(int32_t* outlier_idx, int32_t* total_num){
     }
 }
 
+// Input: x:dequantized_fp16:[m, n], x_fp16:T:[m, n], input_range:T:[m], weight_scale:T:[n]
+// Outpuy: y:T:[m, n]
+template <typename T, int VecSize>
+__global__ void DequantActivationMergeKernel(const T* x, const T* x_fp, T* y, const int32_t elem_cnt) {
+  using FpVec = phi::AlignedVector<T, VecSize>;
+
+  FpVec x_fp_vec;
+  FpVec out_vec;
+  FpVec x_vec;
+
+  for(int linear_idx = (blockIdx.x * blockDim.x + threadIdx.x) * VecSize; linear_idx < elem_cnt; linear_idx += gridDim.x * blockDim.x * VecSize){ 
+    phi::Load(x_fp + linear_idx, &x_fp_vec);
+    phi::Load(x + linear_idx, &x_vec);
+    
+    #pragma unroll
+    for (int i = 0; i < VecSize; ++i) {
+      out_vec[i] = x_fp_vec[i] + (x_vec[i] / static_cast<T>(127.0f));
+    }
+    phi::Store(out_vec, y + linear_idx);
+  }
+}
+
 // Input: x:int32:[m, n], x_fp16:T:[m, n], input_range:T:[m], weight_scale:T:[n]
 // Outpuy: y:T:[m, n]
 
 template <typename T, int VecSize>
-__global__ void DequantMergeKernel(const int32_t* x, const T* x_fp, const T* input_range, const T* weight_scale, T* y, int m, int n) {
+__global__ void DequantMergeKernel(const int32_t* x, const T* x_fp, const float* input_range, const float* weight_scale, T* y, int m, int n) {
   using FpVec = phi::AlignedVector<T, VecSize>;
   using IntVec = phi::AlignedVector<int32_t, VecSize>;
 
@@ -323,76 +403,67 @@ void LaunchFillKernel(T* input, T value, int64_t num, GpuLaunchConfig* gpu_confi
 
 template<typename T> 
 void LaunchReduceAbsMaxQuantKernel(const T* x, const float threshold, const int32_t rows, const int32_t cols, 
-                                   T* row_ranges, int32_t* outlier_idx, int8_t* quant_x, gpuStream_t stream) {
-  constexpr int NumThreads=256;
+                                   float* row_ranges, int32_t* outlier_idx, int8_t* quant_x, gpuStream_t stream) {
   constexpr int VecSize= 16 / sizeof(T);
 
   using DataT = typename PDDataTypeTraits<T>::DataType; 
+  using ComputeType = float; 
 
-  ReduceAbsMaxKernel<DataT, VecSize><<<rows, NumThreads, 0, stream>>>(reinterpret_cast<const DataT*>(x), threshold, rows, cols, 
-                                                                  reinterpret_cast<DataT*>(row_ranges), outlier_idx);
-  QuantActKernel<DataT, VecSize><<<rows, NumThreads, 0, stream>>>(reinterpret_cast<const DataT*>(x), rows, cols, 
-                                                                  reinterpret_cast<DataT*>(row_ranges), outlier_idx, quant_x);                                                            
+  int32_t reduce_kernel_num_blocks; 
+  PADDLE_ENFORCE_GPU_SUCCESS(GetMaxOccupancyBlocks(ReduceAbsMaxKernel<DataT, ComputeType, VecSize>, kBlockSize, 0, rows, &reduce_kernel_num_blocks));
+  assert((cols % VecSize == 0)); 
+
+  ReduceAbsMaxKernel<DataT, ComputeType, VecSize><<<reduce_kernel_num_blocks, kBlockSize, 0, stream>>>(reinterpret_cast<const DataT*>(x), threshold, rows, cols, 
+                                                                                                       row_ranges, outlier_idx);
+
+  const int32_t elem_cnt = rows * cols; 
+  const int32_t vectorized_elem_cnt = elem_cnt / VecSize; 
+  int32_t quant_kernel_num_blocks; 
+  PADDLE_ENFORCE_GPU_SUCCESS(GetGridSize(vectorized_elem_cnt, &quant_kernel_num_blocks));
+  QuantActKernel<DataT, VecSize><<<quant_kernel_num_blocks, kBlockSize, 0, stream>>>(reinterpret_cast<const DataT*>(x), elem_cnt, cols, 
+                                                                                     row_ranges, outlier_idx, quant_x); 
+
 }
 
-// template<typename T>
-// void LaunchSplitKernel(const T* x, const int8_t* weight, const T* weight_scale, const int32_t* outlier_idx, 
-//                        T* sub_x, T* sub_weight, int m, int k, int n, int kfp_num, gpuStream_t stream) {
-//   int NumThreads=kfp_num;
-//   int max_row = m > n ? m : n;
-//   int64_t num_outlier_idx = (k + 31) / 32;    
-
-
-//   using DataT = typename PDDataTypeTraits<T>::DataType;
-//   SplitKernel<DataT><<<max_row, NumThreads, kfp_num * sizeof(int32_t), stream>>>(reinterpret_cast<const DataT*>(x), weight, 
-//                                                           reinterpret_cast<const DataT*>(weight_scale), outlier_idx, 
-//                                                           reinterpret_cast<DataT*>(sub_x), reinterpret_cast<DataT*>(sub_weight), m, k, n, num_outlier_idx, kfp_num);            
-// }
-
 template<typename T>
-void LaunchSplitKernel(const T* x, const int8_t* weight, const T* weight_scale, const int32_t* outlier_idx, 
+void LaunchSplitKernel(const T* x, const int8_t* weight, const float* weight_scale, const int32_t* outlier_idx, 
                        T* sub_x, T* sub_weight, int m, int k, int n, int kfp_num, gpuStream_t stream) {
-  // kfp_num 
-  int NumThreads=256;
-  constexpr int kNumWaves = 16; 
-  int dev;
-  cudaGetDevice(&dev);
-  int sm_count;
-  cudaDeviceGetAttribute(&sm_count, cudaDevAttrMultiProcessorCount, dev);
-  int tpm;
-  cudaDeviceGetAttribute(&tpm, cudaDevAttrMaxThreadsPerMultiProcessor, dev);
   int max_row = m > n ? m : n;
   const int elem_cnt = max_row * kfp_num; 
-  const int grid = std::max<int>(1, std::min<int64_t>((elem_cnt + NumThreads - 1) / NumThreads,
-                                                   sm_count * tpm / NumThreads * kNumWaves));
+  int num_blocks = 1; 
+  PADDLE_ENFORCE_GPU_SUCCESS(GetGridSize(elem_cnt, &num_blocks));
   int64_t num_outlier_idx = (k + 31) / 32;  
 
   const int32_t sub_x_elem_cnt = m * kfp_num; 
   const int32_t sub_w_elem_cnt = n * kfp_num; 
+  VLOG(1) << "Sub w elem cnt is: " << sub_w_elem_cnt; 
 
   using DataT = typename PDDataTypeTraits<T>::DataType;
-  SplitKernel<DataT><<<grid, NumThreads, kfp_num * sizeof(int32_t), stream>>>(reinterpret_cast<const DataT*>(x), weight, 
-                                                                  reinterpret_cast<const DataT*>(weight_scale), outlier_idx, 
-                                                                     reinterpret_cast<DataT*>(sub_x), 
-                                                                     reinterpret_cast<DataT*>(sub_weight), m, k, n, num_outlier_idx, 
-                                                                     kfp_num, 
-                                                                     sub_x_elem_cnt, 
-                                                                     sub_w_elem_cnt, 
-                                                                     elem_cnt);            
+  SplitKernel<DataT><<<num_blocks, kBlockSize, kfp_num * sizeof(int32_t), stream>>>(reinterpret_cast<const DataT*>(x), weight, 
+                                                                                    weight_scale, outlier_idx, 
+                                                                                    reinterpret_cast<DataT*>(sub_x), 
+                                                                                    reinterpret_cast<DataT*>(sub_weight), m, k, n, num_outlier_idx, 
+                                                                                    kfp_num, 
+                                                                                    sub_x_elem_cnt, 
+                                                                                    sub_w_elem_cnt, 
+                                                                                    elem_cnt);            
 }
 
 template <typename T>
-void LaunchDequantMergeKernel(const int32_t* x, const T* x_fp, const T* input_range, const T* weight_scale, T* y, int m, int n, gpuStream_t stream) {
+void LaunchDequantMergeKernel(const int32_t* x, const T* x_fp, const float* input_range, const float* weight_scale, T* y, int m, int n, gpuStream_t stream) {
   constexpr int NumThreads=256;
   constexpr int VecSize=16 / sizeof(T);
 
   using DataT = typename PDDataTypeTraits<T>::DataType;     
 
   DequantMergeKernel<DataT, VecSize><<<m, NumThreads, 0, stream>>>(x, reinterpret_cast<const DataT*>(x_fp), 
-                                                              reinterpret_cast<const DataT*>(input_range), 
-                                                              reinterpret_cast<const DataT*>(weight_scale), 
+                                                              reinterpret_cast<const float*>(input_range), 
+                                                              reinterpret_cast<const float*>(weight_scale), 
                                                               reinterpret_cast<DataT*>(y), m, n);
 }
+
+} // namespace 
+
 
 template <typename T>
 void LLMGemm(const phi::GPUContext& dev_ctx, 
@@ -410,28 +481,19 @@ void LLMGemm(const phi::GPUContext& dev_ctx,
   row_ranges.Resize({m});
   outlier_idx.Resize({num_outlier_idx});
   quant_input.Resize({m, k});
-  dev_ctx.Alloc<T>(&row_ranges);
+  dev_ctx.Alloc<float>(&row_ranges);
   dev_ctx.Alloc<int32_t>(&outlier_idx);
   dev_ctx.Alloc<int8_t>(&quant_input);
 
-  PADDLE_ENFORCE_GPU_SUCCESS(	cudaMemsetAsync(outlier_idx.data<int32_t>(), 0, num_outlier_idx * sizeof(int32_t), dev_ctx.stream()));
-  // VLOG(1) << "LaunchReduceAbsMaxQuantKernel";
+  PADDLE_ENFORCE_GPU_SUCCESS(cudaMemsetAsync(outlier_idx.data<int32_t>(), 0, num_outlier_idx * sizeof(int32_t), dev_ctx.stream()));
   LaunchReduceAbsMaxQuantKernel(input->data<T>(), threshold, m, k, 
-                          row_ranges.data<T>(), outlier_idx.data<int32_t>(), quant_input.data<int8_t>(), dev_ctx.stream());
-  // PADDLE_ENFORCE_GPU_SUCCESS(cudaDeviceSynchronize());
-  // VLOG(1) << "input " << *input;
+                          row_ranges.data<float>(), outlier_idx.data<int32_t>(), quant_input.data<int8_t>(), dev_ctx.stream());
   VLOG(2) << "row_ranges " << row_ranges;
   VLOG(2) << "quant_input " << quant_input;
-  // VLOG(1) << outlier_idx;
-
-  // Test outlier
-    // std::vector<int32_t> outlier_idx_vec(num_outlier_idx);
-    // cudaMemcpy(outlier_idx_vec.data(), outlier_idx.data<int32_t>(), num_outlier_idx * sizeof(int32_t), cudaMemcpyDeviceToHost);
     int32_t kfp_num = 0;
     phi::DenseTensor kfp_num_tensor;
     kfp_num_tensor.Resize({1});
     dev_ctx.Alloc<int32_t>(&kfp_num_tensor);
-
 
     PADDLE_ENFORCE_GPU_SUCCESS(cudaMemsetAsync(kfp_num_tensor.data<int32_t>(), 0, sizeof(int32_t), dev_ctx.stream()));
     UpdateOutlier<<<1, num_outlier_idx, 0, dev_ctx.stream()>>>(outlier_idx.data<int32_t>(), kfp_num_tensor.data<int32_t>()); 
@@ -457,7 +519,7 @@ void LLMGemm(const phi::GPUContext& dev_ctx,
 
     // VLOG(1) << "LaunchSplitKernel";
 
-    LaunchSplitKernel(input->data<T>(), weight->data<int8_t>(), weight_scale->data<T>(), outlier_idx.data<int32_t>(), 
+    LaunchSplitKernel(input->data<T>(), weight->data<int8_t>(), weight_scale->data<float>(), outlier_idx.data<int32_t>(), 
                         sub_input.data<T>(), sub_weight.data<T>(), m, k, n, kfp_num, dev_ctx.stream());
 
 
@@ -505,7 +567,7 @@ void LLMGemm(const phi::GPUContext& dev_ctx,
   // PADDLE_ENFORCE_GPU_SUCCESS(cudaDeviceSynchronize());
 
   // VLOG(1) << "LaunchDequantMergeKernel";
-  LaunchDequantMergeKernel<T>(int_out.data<int32_t>(), sub_out.data<T>(), row_ranges.data<T>(), weight_scale->data<T>(), output->data<T>(), m, n, dev_ctx.stream());
+  LaunchDequantMergeKernel<T>(int_out.data<int32_t>(), sub_out.data<T>(), row_ranges.data<float>(), weight_scale->data<float>(), output->data<T>(), m, n, dev_ctx.stream());
   // PADDLE_ENFORCE_GPU_SUCCESS(cudaDeviceSynchronize());
 }
 

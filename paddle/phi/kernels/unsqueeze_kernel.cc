@@ -31,10 +31,10 @@ void UnsqueezeInferKernel(const Context& dev_ctx,
     out_dims = funcs::GetUnsqueezeShape(axes.GetData(), x_dims);
   }
   out->Resize(out_dims);
-  dev_ctx.template Alloc<T>(out);
-  if (x.Holder() == out->Holder()) {
+  if (x.initialized() && x.Holder() == out->Holder()) {
     return;
   }
+  dev_ctx.template Alloc<T>(out);
   phi::Copy(dev_ctx, x, dev_ctx.GetPlace(), false, out);
   out->Resize(out_dims);  // copy will reset the dims.
 }

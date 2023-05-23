@@ -1096,10 +1096,10 @@ def fused_multi_transformer(
         dtype = x.dtype
         # check dtypes
         check_variable_and_dtype(
-            x, 'x', ['float16', 'float32'], 'fused_multi_transformer'
+            x, 'x', ['uint16', 'float16', 'float32'], 'fused_multi_transformer'
         )
         check_dtype(
-            dtype, 'dtype', ['float16', 'float32'], 'fused_multi_transformer'
+            dtype, 'dtype', ['uint16', 'float16', 'float32'], 'fused_multi_transformer'
         )
 
         # set inputs

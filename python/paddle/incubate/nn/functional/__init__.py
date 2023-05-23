@@ -23,6 +23,8 @@ from .cutlass_fused_multi_head_attention import (
 )
 from .fused_dropout_add import fused_dropout_add
 from .fused_gate_attention import fused_gate_attention
+from .rms_norm import rms_norm
+from .fused_llama import fused_llama
 
 
 __all__ = [

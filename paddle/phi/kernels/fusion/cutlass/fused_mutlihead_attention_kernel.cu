@@ -359,7 +359,13 @@ void MultiHeadAttentionForwardWrapper(const Context& ctx,
                                      T* output) {
   LaunchParams params{};
 
-  params.datatype = DataType::FLOAT16;
+  if (std::is_same<T, phi::dtype::float16>::value) {
+    params.datatype = DataType::FLOAT16;
+  } else if (std::is_same<T, phi::dtype::bfloat16>::value) {
+    params.datatype = DataType::BFLOAT16;
+  } else {
+    params.datatype = DataType::FLOAT32;
+  }
   params.query_ptr = query;
   params.key_ptr = key;
 

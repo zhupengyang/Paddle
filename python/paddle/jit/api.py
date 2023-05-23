@@ -1137,6 +1137,7 @@ def save(layer, path, input_spec=None, **configs):
                         param_or_buffer.name
                     ).get_tensor()
                     # src_tensor = param_or_buffer.value().get_tensor()
+                    
                     src_tensor = (
                         state_var_dict[param_or_buffer.name]
                         .value()

@@ -34,12 +34,16 @@ from ..framework import (
 __all__ = []
 
 
-def top_p_sampling(x, ps, name=None):
+def top_p_sampling(x, ps, seed=None, name=None):
+
+    if seed is None:
+        seed = -1
+
     if in_dygraph_mode():
-        return _C_ops.top_p_sampling(x, ps)
+        return _C_ops.top_p_sampling(x, ps, seed)
 
     inputs = {"x": [x], "ps": [ps]}
-    attrs = {}
+    attrs = {"seed": seed}
 
     helper = LayerHelper('top_p_sampling', **locals())
     out = helper.create_variable_for_type_inference(dtype=x.dtype)
