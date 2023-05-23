@@ -24,7 +24,7 @@ limitations under the License. */
 #include <fstream> 
 #include <iomanip> 
 
-DECLARE_bool(gemm_use_half_precision_compute_type);
+PHI_DECLARE_bool(gemm_use_half_precision_compute_type);
 
 namespace paddle {
 namespace operators {

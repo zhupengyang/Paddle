@@ -25,7 +25,11 @@ void AffineGridGradInferMeta(const MetaTensor& output_grad,
                              MetaTensor* input_grad) {
   if (input_grad) {
     auto output_dims = output_grad.dims();
-    input_grad->set_dims(phi::make_ddim({output_dims[0], 2, 3}));
+    if (output_dims.size() == 4) {
+      input_grad->set_dims(phi::make_ddim({output_dims[0], 2, 3}));
+    } else {
+      input_grad->set_dims(phi::make_ddim({output_dims[0], 3, 4}));
+    }
   }
 }
 
@@ -35,14 +39,14 @@ void AngleGradInferMeta(const MetaTensor& x,
   UnchangedInferMeta(x, x_grad);
 }
 
-void BilinearTensorProductGradInferMeta(const MetaTensor& x,
-                                        const MetaTensor& y,
-                                        const MetaTensor& weight,
-                                        const MetaTensor& dout,
-                                        MetaTensor* dx,
-                                        MetaTensor* dy,
-                                        MetaTensor* dweight,
-                                        MetaTensor* dbias) {
+void BilinearGradInferMeta(const MetaTensor& x,
+                           const MetaTensor& y,
+                           const MetaTensor& weight,
+                           const MetaTensor& dout,
+                           MetaTensor* dx,
+                           MetaTensor* dy,
+                           MetaTensor* dweight,
+                           MetaTensor* dbias) {
   auto x_dims = x.dims();
   auto y_dims = y.dims();
   auto weight_dims = weight.dims();
@@ -215,6 +219,19 @@ void FlashAttnGradInferMeta(const MetaTensor& q,
   }
 }
 
+void FusedDropoutAddGradInferMeta(const MetaTensor& seed_offset,
+                                  const MetaTensor& out_grad,
+                                  MetaTensor* x_grad,
+                                  MetaTensor* y_grad) {
+  if (x_grad != nullptr) {
+    x_grad->share_meta(out_grad);
+  }
+
+  if (y_grad != nullptr) {
+    y_grad->share_meta(out_grad);
+  }
+}
+
 void CrossEntropyWithSoftmaxGradInferMeta(const MetaTensor& label,
                                           const MetaTensor& softmax,
                                           const MetaTensor& loss_grad,
@@ -320,6 +337,15 @@ void EigvalshGradInferMeta(const MetaTensor& out_v,
   if (x_grad != nullptr) {
     x_grad->set_dims(dims);
     x_grad->set_dtype(out_v.dtype());
+  }
+}
+
+void EmbeddingGradInferMeta(const MetaTensor& x,
+                            const MetaTensor& weight,
+                            MetaTensor* out) {
+  (void)x;
+  if (weight) {
+    out->share_dims(weight);
   }
 }
 
@@ -1041,6 +1067,33 @@ void StackGradInferMeta(const MetaTensor& out_grad,
       x_grad[i]->set_dtype(out_grad.dtype());
     }
   }
+}
+
+void TransposeGradInferMeta(const MetaTensor& x,
+                            const std::vector<int>& axis,
+                            MetaTensor* out) {
+  size_t x_rank = x.dims().size();
+  std::vector<int> formated_axis = axis;
+  for (size_t i = 0; i < axis.size(); i++) {
+    if (axis[i] < 0) {
+      formated_axis[i] = axis[i] + x_rank;
+    }
+  }
+
+  std::vector<int> reversed_axis(axis);
+  for (size_t i = 0; i < formated_axis.size(); i++) {
+    reversed_axis[formated_axis[i]] = i;
+  }
+
+  TransposeInferMeta(x, reversed_axis, out);
+}
+
+void TransLayoutGradInferMeta(const MetaTensor& x,
+                              const MetaTensor& out_grad,
+                              const std::vector<int>& axis,
+                              MetaTensor* x_grad) {
+  TransposeGradInferMeta(out_grad, axis, x_grad);
+  x_grad->set_layout(static_cast<DataLayout>(x.layout()));
 }
 
 void UniformRandomInplaceGradInferMeta(const MetaTensor& out_grad,
