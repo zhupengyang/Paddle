@@ -22,10 +22,6 @@ limitations under the License. */
 
 // #define _DEBUG_FUSED_MULTI_TRANSFORMER
 // #define _DEBUG_FUSED_MULTI_TRANSFORMER_PRINT_TENSOR
-DECLARE_bool(use_cutlass_fmha); 
-DECLARE_int64(custom_allreduce_one_shot_threshold);
-DECLARE_int64(custom_allreduce_two_shot_threshold);
-DECLARE_double(custom_llm_int8_threshold);
 namespace paddle {
 namespace operators {
 
@@ -158,7 +154,7 @@ class FusedMultiTransformerDyquantOpKernel : public framework::OpKernel<T> {
     int output_size = 3 * hidden_size;
     int input_size = dim_embed;
 
-    bool compute_bias = qkv_biases.size() > 0 && time_step == nullptr;
+    bool compute_bias = qkv_biases.size() > 0;
     // (transA, transB, compute_bias) = (false, trans_qkvw, false)
     // Since we fused QKVBias into QKVBiasAddTransposeSplit kernel, here we
     // set compute_bias as false.

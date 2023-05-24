@@ -51,7 +51,7 @@ static phi::DenseTensor CustomAllReduce(const phi::DenseTensor &t) {
   return comm->AllReduce();
 }
 
-template <typename T>
+template <typename T, typename DeviceContext>
 class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
  public:
   void Compute(const framework::ExecutionContext &ctx) const override {
@@ -79,6 +79,14 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
     phi::DenseTensor x_remove_padding;
     bool encoder_remove_padding = (remove_padding && !time_step);
     int token_num = 0;
+
+    auto *out = ctx.Output<phi::DenseTensor>("Out");
+    auto *from_data = dev_ctx.Alloc<T>(out, out->numel() * sizeof(T));
+
+    // Init out
+    if (encoder_remove_padding) {
+      InitValue(dev_ctx, from_data, out->numel(), static_cast<T>(0.));
+    }
 
     // remove padding in encoder
     if (encoder_remove_padding) {
@@ -143,7 +151,8 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
     int output_size = 3 * hidden_size;
     int input_size = dim_embed;
 
-    bool compute_bias = qkv_biases.size() > 0 && time_step == nullptr;
+    bool compute_bias = qkv_biases.size() > 0;
+
     // (transA, transB, compute_bias) = (false, trans_qkvw, false)
     // Since we fused QKVBias into QKVBiasAddTransposeSplit kernel, here we
     // set compute_bias as false.
@@ -343,15 +352,6 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
     DropoutParam ffn2_dropout_param(true, 0, true, true, 0.0, nullptr, 0);
     FusedDropoutLayerNormHelper<T, uint8_t> ffn2_fused_dropout_helper(
         dev_ctx, token_num, dim_embed, ffn2_dropout_param, epsilon);
-
-    // calc
-    auto *out = ctx.Output<phi::DenseTensor>("Out");
-    auto *from_data = dev_ctx.Alloc<T>(out, out->numel() * sizeof(T));
-
-    // Init out
-    if (encoder_remove_padding) {
-      InitValue(dev_ctx, from_data, out->numel(), static_cast<T>(0.));
-    }
 
     phi::DenseTensor tmp_out, tmp_out_rm_padding;
     tmp_out.Resize({{token_num, dim_embed}});
@@ -879,8 +879,10 @@ class FusedMultiTransformerOpKernel : public framework::OpKernel<T> {
 
 namespace ops = paddle::operators;
 namespace plat = paddle::platform;
-REGISTER_OP_CUDA_KERNEL(fused_multi_transformer,
-                        ops::FusedMultiTransformerOpKernel<plat::bfloat16>,
-                        ops::FusedMultiTransformerOpKernel<plat::float16>,
-                        ops::FusedMultiTransformerOpKernel<float>
-                        );
+PD_REGISTER_STRUCT_KERNEL(fused_multi_transformer,
+                          GPU,
+                          ALL_LAYOUT,
+                          ops::FusedMultiTransformerOpKernel,
+                          float,
+                          plat::float16,
+                          plat::bfloat16) {}

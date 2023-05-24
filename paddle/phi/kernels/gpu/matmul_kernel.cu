@@ -36,5 +36,5 @@ PD_REGISTER_KERNEL(matmul_with_flatten,
                    phi::MatmulWithFlattenKernel,
                    float,
                    double,
-                   phi::dtype::float16,
-                   phi::dtype::bfloat16) {}
+                   phi::dtype::bfloat16,
+                   phi::dtype::float16) {}

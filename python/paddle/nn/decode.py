@@ -20,7 +20,7 @@ import numpy as np
 
 import paddle
 from paddle.common_ops_import import default_main_program
-from paddle.framework import _non_static_mode
+from paddle.framework import in_dynamic_mode
 
 from ..fluid.data_feeder import convert_dtype
 
@@ -712,7 +712,7 @@ def _dynamic_decode_imperative(
 
     step_idx = 0
     step_idx_tensor = paddle.full(shape=[1], fill_value=step_idx, dtype="int64")
-    while cond.item():
+    while np.array(cond).item():
         (step_outputs, next_states, next_inputs, next_finished) = decoder.step(
             step_idx_tensor, inputs, states, **kwargs
         )
@@ -1071,7 +1071,7 @@ def dynamic_decode(
                                     inits=decoder_cell.get_initial_states(encoder_output),
                                     max_step_num=10)
     """
-    if _non_static_mode():
+    if in_dynamic_mode():
         return _dynamic_decode_imperative(
             decoder,
             inits,
