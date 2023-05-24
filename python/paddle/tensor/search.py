@@ -25,7 +25,7 @@ from ..framework import (
     LayerHelper,
     convert_np_dtype_to_dtype_,
     core,
-    in_dygraph_mode,
+    in_dynamic_mode,
 )
 
 # from ..fluid.layers import has_inf  #DEFINE_ALIAS
@@ -117,7 +117,7 @@ def argsort(x, axis=-1, descending=False, name=None):
             #  [1 1 0 2]
             #  [0 2 1 1]]]
     """
-    if in_dygraph_mode():
+    if in_dynamic_mode():
         _, ids = _C_ops.argsort(x, axis, descending)
         return ids
     else:
@@ -201,7 +201,7 @@ def argmax(x, axis=None, keepdim=False, dtype="int64", name=None):
         flatten = True
         axis = 0
 
-    if in_dygraph_mode():
+    if in_dynamic_mode():
         return _C_ops.argmax(x, axis, keepdim, flatten, var_dtype)
     else:
         helper = LayerHelper("argmax", **locals())
@@ -291,7 +291,7 @@ def argmin(x, axis=None, keepdim=False, dtype="int64", name=None):
         flatten = True
         axis = 0
 
-    if in_dygraph_mode():
+    if in_dynamic_mode():
         return _C_ops.argmin(x, axis, keepdim, flatten, var_dtype)
     else:
         helper = LayerHelper("argmin", **locals())
@@ -360,7 +360,7 @@ def index_select(x, index, axis=0, name=None):
             # [ 9. 10. 10.]]
     """
 
-    if in_dygraph_mode():
+    if in_dynamic_mode():
         return _C_ops.index_select(x, index, axis)
     else:
         helper = LayerHelper("index_select", **locals())
@@ -444,7 +444,7 @@ def nonzero(x, as_tuple=False):
     shape = x.shape
     rank = len(shape)
 
-    if in_dygraph_mode():
+    if in_dynamic_mode():
         outs = _C_ops.nonzero(x)
     else:
         check_variable_and_dtype(
@@ -541,7 +541,7 @@ def sort(x, axis=-1, descending=False, name=None):
             #  [4. 7. 4. 6.]
             #  [5. 7. 7. 9.]]]
     """
-    if in_dygraph_mode():
+    if in_dynamic_mode():
         outs, _ = _C_ops.argsort(x, axis, descending)
         return outs
     else:
@@ -588,11 +588,11 @@ def mode(x, axis=-1, keepdim=False, name=None):
            # (Tensor(shape=[2, 2], dtype=float32, place=CUDAPlace(0), stop_gradient=True,
            #   [[2., 3.],
            #    [5., 9.]]), Tensor(shape=[2, 2], dtype=int64, place=CUDAPlace(0), stop_gradient=True,
-           #   [[1, 1],
-           #    [1, 0]]))
+           #   [[2, 2],
+           #    [2, 1]]))
 
     """
-    if in_dygraph_mode():
+    if in_dynamic_mode():
         return _C_ops.mode(x, axis, keepdim)
     else:
         helper = LayerHelper("mode", **locals())
@@ -631,8 +631,8 @@ def where(condition, x=None, y=None, name=None):
 
     Args:
         condition (Tensor): The condition to choose x or y. When True (nonzero), yield x, otherwise yield y.
-        x (Tensor|scalar, optional): A Tensor or scalar to choose when the condition is True with data type of float16, float32, float64, int32 or int64. Either both or neither of x and y should be given.
-        y (Tensor|scalar, optional): A Tensor or scalar to choose when the condition is False with data type of float16, float32, float64, int32 or int64. Either both or neither of x and y should be given.
+        x (Tensor|scalar, optional): A Tensor or scalar to choose when the condition is True with data type of bfloat16, float16, float32, float64, int32 or int64. Either both or neither of x and y should be given.
+        y (Tensor|scalar, optional): A Tensor or scalar to choose when the condition is False with data type of bfloat16, float16, float32, float64, int32 or int64. Either both or neither of x and y should be given.
         name (str, optional): For details, please refer to :ref:`api_guide_Name`. Generally, no setting is required. Default: None.
 
     Returns:
@@ -691,15 +691,21 @@ def where(condition, x=None, y=None, name=None):
         broadcast_condition = paddle.add(cast_cond, broadcast_zeros)
         broadcast_condition = paddle.cast(broadcast_condition, 'bool')
 
-    if in_dygraph_mode():
+    if in_dynamic_mode():
         return _C_ops.where(broadcast_condition, broadcast_x, broadcast_y)
     else:
         check_variable_and_dtype(condition, 'condition', ['bool'], 'where')
         check_variable_and_dtype(
-            x, 'x', ['uint16', 'float16', 'float32', 'float64', 'int32', 'int64'], 'where'
+            x,
+            'x',
+            ['uint16', 'float16', 'float32', 'float64', 'int32', 'int64'],
+            'where',
         )
         check_variable_and_dtype(
-            y, 'y', ['uint16', 'float16', 'float32', 'float64', 'int32', 'int64'], 'where'
+            y,
+            'y',
+            ['uint16', 'float16', 'float32', 'float64', 'int32', 'int64'],
+            'where',
         )
         helper = LayerHelper("where", **locals())
         out = helper.create_variable_for_type_inference(dtype=x.dtype)
@@ -742,7 +748,7 @@ def index_sample(x, index):
 
     Args:
         x (Tensor): The source input tensor with 2-D shape. Supported data type is
-            int32, int64, float16, float32, float64.
+            int32, int64, bfloat16, float16, float32, float64.
         index (Tensor): The index input tensor with 2-D shape, first dimension should be same with X.
             Data type is int32 or int64.
 
@@ -790,7 +796,7 @@ def index_sample(x, index):
             # [1200 1100]]
 
     """
-    if in_dygraph_mode():
+    if in_dynamic_mode():
         return _C_ops.index_sample(x, index)
     else:
         helper = LayerHelper("index_sample", **locals())
@@ -822,7 +828,7 @@ def masked_select(x, mask, name=None):
     which is a tensor with data type of bool.
 
     Args:
-        x (Tensor): The input Tensor, the data type can be int32, int64, float32, float64.
+        x (Tensor): The input Tensor, the data type can be int32, int64, uint16, float16, float32, float64.
         mask (Tensor): The Tensor containing the binary mask to index with, it's data type is bool.
         name(str, optional): For details, please refer to :ref:`api_guide_Name`. Generally, no setting is required. Default: None.
 
@@ -845,7 +851,7 @@ def masked_select(x, mask, name=None):
             #[1.0 5.0 6.0 9.0]
     """
 
-    if in_dygraph_mode():
+    if in_dynamic_mode():
         return _C_ops.masked_select(x, mask)
 
     else:
@@ -853,7 +859,7 @@ def masked_select(x, mask, name=None):
         check_variable_and_dtype(
             x,
             'x',
-            ['float32', 'float64', 'int32', 'int64'],
+            ['float16', 'float32', 'float64', 'int32', 'int64', 'uint16'],
             'paddle.tensor.search.mask_select',
         )
         check_variable_and_dtype(
@@ -916,7 +922,7 @@ def topk(x, k, axis=None, largest=True, sorted=True, name=None):
 
     """
 
-    if in_dygraph_mode():
+    if in_dynamic_mode():
         if axis is None:
             axis = -1
         out, indices = _C_ops.topk(x, k, axis, largest, sorted)
@@ -1049,7 +1055,7 @@ def searchsorted(
             #         [1, 3, 4, 5]])
 
     """
-    if in_dygraph_mode():
+    if in_dynamic_mode():
         return _C_ops.searchsorted(sorted_sequence, values, out_int32, right)
     else:
         check_variable_and_dtype(
@@ -1083,7 +1089,7 @@ def kthvalue(x, k, axis=None, keepdim=False, name=None):
     Find values and indices of the k-th smallest at the axis.
 
     Args:
-        x(Tensor): A N-D Tensor with type float32, float64, int32, int64.
+        x(Tensor): A N-D Tensor with type float16, float32, float64, int32, int64.
         k(int): The k for the k-th smallest number to look for along the axis.
         axis(int, optional): Axis to compute indices along. The effective range
             is [-R, R), where R is x.ndim. when axis < 0, it works the same way
@@ -1116,7 +1122,7 @@ def kthvalue(x, k, axis=None, keepdim=False, name=None):
             #  [[0, 2],
             #  [1, 2]]))
     """
-    if in_dygraph_mode():
+    if in_dynamic_mode():
         if axis is not None:
             return _C_ops.kthvalue(x, k, axis, keepdim)
         else:
