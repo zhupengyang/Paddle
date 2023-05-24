@@ -22,10 +22,6 @@ limitations under the License. */
 
 // #define _DEBUG_FUSED_MULTI_TRANSFORMER
 // #define _DEBUG_FUSED_MULTI_TRANSFORMER_PRINT_TENSOR
-DECLARE_bool(use_cutlass_fmha); 
-DECLARE_int64(custom_allreduce_one_shot_threshold);
-DECLARE_int64(custom_allreduce_two_shot_threshold);
-DECLARE_double(custom_llm_int8_threshold);
 namespace paddle {
 namespace operators {
 

@@ -29,6 +29,11 @@ limitations under the License. */
 #include <iomanip> 
 
 PHI_DECLARE_bool(gemm_use_half_precision_compute_type);
+// PHI_DECLARE_bool(custom_llm_int8_threshold);
+DECLARE_bool(use_cutlass_fmha); 
+DECLARE_int64(custom_allreduce_one_shot_threshold);
+DECLARE_int64(custom_allreduce_two_shot_threshold);
+DECLARE_double(custom_llm_int8_threshold);
 
 namespace paddle {
 namespace operators {
