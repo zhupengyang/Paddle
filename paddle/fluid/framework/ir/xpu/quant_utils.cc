@@ -16,11 +16,12 @@
 #include <thread>
 #include <vector>
 #include "paddle/fluid/platform/device_context.h"
+#include "paddle/fluid/platform/flags.h"
 #include "paddle/phi/core/enforce.h"
 #include "paddle/phi/kernels/assign_kernel.h"
 #include "paddle/phi/kernels/cast_kernel.h"
-#include "paddle/phi/kernels/transpose_kernel.h"
 #include "paddle/phi/kernels/scale_kernel.h"
+#include "paddle/phi/kernels/transpose_kernel.h"
 
 DECLARE_int32(fuse_multi_transformer_threads);
 PADDLE_DEFINE_EXPORTED_int32(
@@ -49,7 +50,8 @@ void ScaleToMax(const phi::DenseTensor& in, phi::DenseTensor* out) {
 
   switch (in.dtype()) {
     case phi::DataType::FLOAT16:
-      phi::CastKernel<phi::dtype::float16>(*cpu_ctx, in, phi::DataType::FLOAT32, &fp32_tensor);
+      phi::CastKernel<phi::dtype::float16>(
+          *cpu_ctx, in, phi::DataType::FLOAT32, &fp32_tensor);
       phi::ScaleKernel<float>(*cpu_ctx, fp32_tensor, 127.0, 0.0, false, out);
       break;
     case phi::DataType::FLOAT32:
@@ -109,11 +111,14 @@ void Transpose2D(phi::DenseTensor* in, phi::DenseTensor* out) {
       break;
     case phi::DataType::INT8:
       // 1. cast from int8 to int32
-      phi::CastKernel<int8_t>(*cpu_ctx, *in, phi::DataType::INT32, &int32_tensor);
+      phi::CastKernel<int8_t>(
+          *cpu_ctx, *in, phi::DataType::INT32, &int32_tensor);
       // 2. transpose2d
-      phi::TransposeKernel<int>(*cpu_ctx, int32_tensor, axis, &int32_trans_tensor);
+      phi::TransposeKernel<int>(
+          *cpu_ctx, int32_tensor, axis, &int32_trans_tensor);
       // 3. cast from int32 to int8
-      phi::CastKernel<int>(*cpu_ctx, int32_trans_tensor, phi::DataType::INT8, out_ptr);
+      phi::CastKernel<int>(
+          *cpu_ctx, int32_trans_tensor, phi::DataType::INT8, out_ptr);
       break;
     default:
       PADDLE_THROW(platform::errors::InvalidArgument(
